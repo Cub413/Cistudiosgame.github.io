@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Terrain Optimization</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128/examples/js/controls/OrbitControls.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #joystick {
+      position: absolute;
+      bottom: 50px;
+      left: 50px;
+      width: 100px;
+      height: 100px;
+      background-color: rgba(0, 0, 0, 0.5);
+      border-radius: 50%;
+      touch-action: none;
+    }
+    #joystick > div {
+      position: absolute;
+      width: 30px;
+      height: 30px;
+      background-color: rgba(255, 255, 255, 0.7);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    #jump-button {
+      position: absolute;
+      bottom: 50px;
+      right: 50px;
+      width: 70px;
+      height: 70px;
+      background-color: rgba(0, 0, 255, 0.5);
+      border-radius: 50%;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="joystick">
+  <div id="joystick-thumb" style="left: 35px; top: 35px;"></div>
+</div>
+<div id="jump-button"></div>
+
+<script>
+// Escena, cámara y renderizado
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+// Fondo y luces
+scene.background = new THREE.Color(0x87CEEB);
+const light = new THREE.AmbientLight(0xFFFFFF, 0.5);
+scene.add(light);
+const directionalLight = new THREE.DirectionalLight(0xFFFFFF, 1);
+directionalLight.position.set(0, 100, 0).normalize();
+scene.add(directionalLight);
+
+// Configuración de la cámara
+camera.position.set(0, 9, 10);
+camera.rotation.x = -Math.PI / 4;
+
+// Controles de órbita
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+// Generador de ruido
+const simplex = new SimplexNoise();
+
+// Tamaño del mundo
+const blockSize = 1;
+const worldSize = 16; // 16x16 bloques
+let terrain = [];
+
+// Cargar texturas
+const textureLoader = new THREE.TextureLoader();
+const textures = {
+  grass_top: textureLoader.load("/cesped.jpg"),
+  grass_side: textureLoader.load("/cesped_parte_costado.jpg"),
+  dirt: textureLoader.load("/tierra.jpg"),
+  stone: textureLoader.load("/piedra.jpg")
+};
+
+// Crear un bloque con texturas
+function createBlock(x, y, z, type) {
+  const geometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+  let materials;
+
+  if (type === "grass") {
+    materials = [
+      new THREE.MeshStandardMaterial({ map: textures.grass_side }), // X+
+      new THREE.MeshStandardMaterial({ map: textures.grass_side }), // X-
+      new THREE.MeshStandardMaterial({ map: textures.grass_top }),  // Y+ (arriba)
+      new THREE.MeshStandardMaterial({ map: textures.dirt }),       // Y- (abajo)
+      new THREE.MeshStandardMaterial({ map: textures.grass_side }), // Z+
+      new THREE.MeshStandardMaterial({ map: textures.grass_side })  // Z-
+    ];
+  } else if (type === "dirt") {
+    materials = new Array(6).fill(new THREE.MeshStandardMaterial({ map: textures.dirt }));
+  } else if (type === "stone") {
+    materials = new Array(6).fill(new THREE.MeshStandardMaterial({ map: textures.stone }));
+  }
+
+  const block = new THREE.Mesh(geometry, materials);
+  block.position.set(x * blockSize, y * blockSize, z * blockSize);
+  scene.add(block);
+  terrain.push(block);
+}
+
+// Generar el terreno con ruido
+function generateTerrain() {
+  terrain = []; // Limpiar el terreno
+  for (let x = 0; x < worldSize; x++) {
+    for (let z = 0; z < worldSize; z++) {
+      const noiseValue = simplex.noise2D(x / 10, z / 10);
+      const height = Math.floor((noiseValue + 1) * 5); // Altura basada en ruido
+
+      for (let y = 0; y < height; y++) {
+        if (y === height - 1) {
+          createBlock(x, y, z, "grass"); // Césped arriba
+        } else if (y >= height - 3) {
+          createBlock(x, y, z, "dirt");  // Tierra debajo
+        } else {
+          createBlock(x, y, z, "stone"); // Piedra profunda
+        }
+      }
+    }
+  }
+}
+
+// Raycast para detectar el terreno bajo el jugador
+const raycaster = new THREE.Raycaster();
+const direction = new THREE.Vector3(0, -1, 0);
+
+// Posicionar al jugador sobre el bloque de césped
+function getGroundBlockPosition() {
+  raycaster.ray.origin.copy(player.position);
+  raycaster.ray.origin.y += 10; // Comenzamos el raycast más arriba del jugador
+  raycaster.ray.direction.copy(direction);
+  
+  const intersects = raycaster.intersectObjects(terrain);
+  if (intersects.length > 0) {
+    return new THREE.Vector3(player.position.x, intersects[0].point.y + 0.5, player.position.z); // Asegurarse de que esté justo encima del bloque
+  }
+  return player.position; // Si no hay colisión, devolver la posición original
+}
+
+// Crear un cubo para el jugador
+const playerGeometry = new THREE.BoxGeometry(0.8, 1, 0.8);
+const playerMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+const player = new THREE.Mesh(playerGeometry, playerMaterial);
+scene.add(player);
+
+// Posicionar al jugador sobre el bloque de césped
+player.position.copy(getGroundBlockPosition());
+
+// Joystick táctil para el control
+const joystick = document.getElementById("joystick");
+const thumb = document.getElementById("joystick-thumb");
+let joystickActive = false;
+let joystickStart = { x: 0, y: 0 };
+
+// Velocidad y altura de salto
+const moveSpeed = 0.1;
+const jumpSpeed = 0.25;
+let velocityY = 0;
+
+// Función para mover al jugador con raycasting
+function movePlayer(deltaX, deltaY) {
+  // Direcciones de movimiento
+  const directions = [
+    new THREE.Vector3(1, 0, 0),  // derecha
+    new THREE.Vector3(-1, 0, 0), // izquierda
+    new THREE.Vector3(0, 0, 1),  // adelante
+    new THREE.Vector3(0, 0, -1)  // atrás
+  ];
+
+  const newPosX = player.position.x + deltaX * moveSpeed;
+  const newPosZ = player.position.z + deltaY * moveSpeed;
+
+  // Raycast para verificar si hay un bloque en la dirección de movimiento
+  directions.forEach(dir => {
+    for (let i = -1; i <= 1; i++) {  // Verificar en los 3 puntos de la cara en cada dirección
+      const offsetX = (i === 0) ? 0 : (i > 0 ? 0.5 : -0.5);
+      raycaster.ray.origin.set(newPosX + offsetX, player.position.y + 1, newPosZ);
+      raycaster.ray.direction.copy(dir);
+      const intersects = raycaster.intersectObjects(terrain);
+
+      if (intersects.length === 0) {
+        // Si no hay colisión en esa dirección, mover el jugador
+        player.position.x = newPosX;
+        player.position.z = newPosZ;
+      }
+    }
+  });
+}
+
+// Saltar
+function jump() {
+  if (player.position.y <= getGroundBlockPosition().y + 0.5) { // Verificar que el jugador esté en el suelo
+    velocityY = jumpSpeed; // Comienza el salto
+  }
+}
+
+// Evento táctil para controlar el joystick
+joystick.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  joystickActive = true;
+  joystickStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+});
+
+joystick.addEventListener("touchmove", (e) => {
+  if (joystickActive) {
+    const deltaX = (e.touches[0].clientX - joystickStart.x) / 100;
+    const deltaY = (e.touches[0].clientY - joystickStart.y) / 100;
+
+    thumb.style.left = 35 + deltaX * 20 + 'px';
+    thumb.style.top = 35 + deltaY * 20 + 'px';
+
+    movePlayer(deltaX, deltaY); // Mover al jugador según la dirección del joystick
+  }
+});
+
+joystick.addEventListener("touchend", () => {
+  joystickActive = false;
+  thumb.style.left = '35px';
+  thumb.style.top = '35px';
+});
+
+// Botón de salto
+const jumpButton = document.getElementById("jump-button");
+jumpButton.addEventListener("click", () => {
+  jump();
+});
+
+// Animación
+function animate() {
+  requestAnimationFrame(animate);
+
+  // Aplicar la gravedad
+  if (player.position.y > getGroundBlockPosition().y + 0.5) {
+    velocityY -= 0.01; // Simula gravedad
+  } else {
+    velocityY = 0;
+  }
+  player.position.y += velocityY;
+
+  player.position.copy(getGroundBlockPosition()); // Mantener al jugador sobre el terreno
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+generateTerrain();
+animate();
+</script>
+
+</body>
+</html>
