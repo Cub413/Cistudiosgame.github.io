@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bloxd.io + Cámara 1ra/3ra persona + Mira + Salto corregido</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
+<style>
+  body { margin: 0; overflow: hidden; touch-action: none; background:#87CEEB; }
+  #joystick {
+    position: absolute;
+    bottom: 50px;
+    left: 50px;
+    width: 100px;
+    height: 100px;
+    background-color: rgba(0,0,0,0.5);
+    border-radius: 50%;
+    user-select: none;
+    touch-action: none;
+    z-index: 10;
+  }
+  #joystick > div {
+    position: absolute;
+    width: 30px;
+    height: 30px;
+    background-color: rgba(255,255,255,0.7);
+    border-radius: 50%;
+    pointer-events: none;
+    left: 35px;
+    top: 35px;
+  }
+  #jump-button {
+    position: absolute;
+    bottom: 59px;
+    right: 50px;
+    width: 70px;
+    height: 70px;
+    background-color: rgba(1,3,255,1);
+    border-radius: 0%;
+    user-select: none;
+    touch-action: none;
+    z-index: 10;
+  }
+  #camera-toggle {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 110px;
+    height: 40px;
+    background: #444;
+    color: #fff;
+    font-size: 14px;
+    text-align: center;
+    line-height: 40px;
+    border-radius: 5px;
+    user-select: none;
+    cursor: pointer;
+    z-index: 10;
+  }
+  #crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    margin-left: -10px;
+    margin-top: -10px;
+    pointer-events: none;
+    z-index: 15;
+  }
+  #crosshair:before, #crosshair:after {
+    content: '';
+    position: absolute;
+    background: black;
+  }
+  #crosshair:before {
+    left: 9px;
+    top: 0;
+    width: 2px;
+    height: 20px;
+  }
+  #crosshair:after {
+    top: 9px;
+    left: 0;
+    width: 20px;
+    height: 2px;
+  }
+</style>
+</head>
+<body>
+
+<div id="joystick"><div id="joystick-thumb"></div></div>
+<div id="jump-button"></div>
+<div id="camera-toggle">3ra Persona</div>
+<div id="crosshair"></div>
+
+<script>
+// Setup básico
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+// Cámara contenedor para evitar inclinación diagonal
+const cameraHolder = new THREE.Object3D();
+cameraHolder.add(camera);
+scene.add(cameraHolder);
+
+// Luz
+scene.background = new THREE.Color(0x87CEEB);
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+dirLight.position.set(10,20,10);
+scene.add(dirLight);
+const salto = 1; // altura de salto en bloques
+const gravedadBase = 0.02;
+const gravedad = gravedadBase * salto;  // mayor salto = más gravedad para mantener tiempos similares
+
+
+// Terreno básico con bloques
+const simplex = new SimplexNoise();
+const blockSize = 1;
+const worldSize = 16;
+let terrain = [];
+let joystickTouchId = null;
+let cameraTouchId = null;
+
+const textureLoader = new THREE.TextureLoader();
+const textures = {
+  grass_top: textureLoader.load("Texturas/cesped.jpg"),
+  grass_side: textureLoader.load("Texturas/cesped_parte_costado.jpg"),
+  dirt: textureLoader.load("Texturas/tierra.jpg"),
+  stone: textureLoader.load("Texturas/piedra.jpg")
+};
+const jumpButton = document.getElementById("jump-button");
+
+function createBlock(x,y,z,type){
+  const pos = new THREE.Vector3(x,y,z);
+  const directions = [
+    new THREE.Vector3(1,0,0),
+    new THREE.Vector3(-1,0,0),
+    new THREE.Vector3(0,1,0),
+    new THREE.Vector3(0,-1,0),
+    new THREE.Vector3(0,0,1),
+    new THREE.Vector3(0,0,-1)
+  ];
+  const isSurrounded = directions.every(dir=>{
+    const neighborPos = pos.clone().add(dir);
+    return terrain.some(b=>
+      b.position.x === neighborPos.x * blockSize &&
+      b.position.y === neighborPos.y * blockSize &&
+      b.position.z === neighborPos.z * blockSize
+    );
+  });
+  if(isSurrounded) return;
+
+  const textureMaps = (() => {
+    if(type==="grass"){
+      return [
+        textures.grass_side,
+        textures.grass_side,
+        textures.grass_top,
+        textures.dirt,
+        textures.grass_side,
+        textures.grass_side
+      ];
+    } else if(type==="dirt") {
+      return new Array(6).fill(textures.dirt);
+    } else if(type==="stone") {
+      return new Array(6).fill(textures.stone);
+    }
+  })();
+
+  const geometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+  const materials = [];
+  for(let i=0; i<6; i++){
+    const neighborPos = pos.clone().add(directions[i]);
+    const hasNeighbor = terrain.some(b=>
+      b.position.x === neighborPos.x * blockSize &&
+      b.position.y === neighborPos.y * blockSize &&
+      b.position.z === neighborPos.z * blockSize
+    );
+    materials.push(hasNeighbor ? new THREE.MeshStandardMaterial({visible:false}) : new THREE.MeshStandardMaterial({map:textureMaps[i]}));
+  }
+  const block = new THREE.Mesh(geometry, materials);
+  block.position.set(x*blockSize,y*blockSize,z*blockSize);
+  scene.add(block);
+  terrain.push(block);
+}
+
+function generateTerrain(){
+  terrain = [];
+  for(let x=0;x<worldSize;x++){
+    for(let z=0;z<worldSize;z++){
+      const n = simplex.noise2D(x/10,z/10);
+      const h = Math.floor((n+1)*5);
+      for(let y=0;y<h;y++){
+        if(y===h-1) createBlock(x,y,z,"grass");
+        else if(y>=h-3) createBlock(x,y,z,"dirt");
+        else createBlock(x,y,z,"stone");
+      }
+    }
+  }
+}
+
+// Jugador cubo rojo
+const playerGeometry = new THREE.BoxGeometry(0.8,1,0.8);
+const playerMaterial = new THREE.MeshStandardMaterial({color:0xff0000});
+const player = new THREE.Mesh(playerGeometry, playerMaterial);
+scene.add(player);
+
+const raycaster = new THREE.Raycaster();
+const down = new THREE.Vector3(0,-1,0);
+
+function getGroundHeight(x,z){
+  raycaster.ray.origin.set(x,50,z);
+  raycaster.ray.direction.copy(down);
+  const hits = raycaster.intersectObjects(terrain);
+  if(hits.length>0) return hits[0].point.y;
+  return 0;
+}
+
+player.position.set(worldSize/2,10,worldSize/2);
+player.position.y = getGroundHeight(player.position.x, player.position.z)+0.5;
+
+// Variables para joystick
+const joystick = document.getElementById("joystick");
+const thumb = joystick.children[0];
+let joystickActive = false;
+let joystickStart = {x:0,y:0};
+let moveVector = new THREE.Vector2(0,0);
+
+joystick.addEventListener("touchstart", e => {
+  for (const touch of e.changedTouches) {
+    if (joystickTouchId === null) {
+      joystickTouchId = touch.identifier;
+      joystickActive = true;
+      joystickStart = { x: touch.clientX, y: touch.clientY };
+      e.preventDefault();
+      break;
+    }
+  }
+});
+
+joystick.addEventListener("touchmove", e => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystickTouchId && joystickActive) {
+      const deltaX = (touch.clientX - joystickStart.x) / 50;
+      const deltaY = (touch.clientY - joystickStart.y) / 50;
+      moveVector.set(
+        Math.max(-1, Math.min(1, deltaX)),
+        Math.max(-1, Math.min(1, deltaY))
+      );
+      thumb.style.left = 35 + moveVector.x * 30 + "px";
+      thumb.style.top  = 35 + moveVector.y * 30 + "px";
+      e.preventDefault();
+      break;
+    }
+  }
+});
+
+joystick.addEventListener("touchend", e => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystickTouchId) {
+      joystickTouchId = null;
+      joystickActive = false;
+      moveVector.set(0, 0);
+      thumb.style.left = "35px";
+      thumb.style.top  = "35px";
+      e.preventDefault();
+      break;
+    }
+  }
+});
+
+// Variables para control de cámara con swipe
+let camYaw = 0;
+let camPitch = 0;
+const camDistance = 5;
+let looking = false;
+let lookStart = {x:0,y:0};
+
+function isTouchOnJoystick(touch){
+  const r = joystick.getBoundingClientRect();
+  return (touch.clientX>=r.left && touch.clientX<=r.right && touch.clientY>=r.top && touch.clientY<=r.bottom);
+}
+
+renderer.domElement.addEventListener("touchstart", e => {
+  for (const touch of e.changedTouches) {
+    if (!isTouchOnJoystick(touch) && cameraTouchId === null) {
+
+      cameraTouchId = touch.identifier;
+      looking = true;
+      lookStart = { x: touch.clientX, y: touch.clientY };
+      e.preventDefault();
+      break;
+    }
+  }
+});
+
+renderer.domElement.addEventListener("touchmove", e => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === cameraTouchId && looking) {
+      if (isTouchOnJoystick(touch)) return;
+      const dx = touch.clientX - lookStart.x;
+      const dy = touch.clientY - lookStart.y;
+      lookStart.x = touch.clientX;
+      lookStart.y = touch.clientY;
+      camYaw   -= dx * 0.005;
+      camPitch -= dy * 0.005;
+      const maxP = Math.PI / 2 - 0.1;
+      const minP = -maxP;
+      camPitch = Math.max(minP, Math.min(maxP, camPitch));
+      e.preventDefault();
+      break;
+    }
+  }
+});
+
+renderer.domElement.addEventListener("touchend", e => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === cameraTouchId) {
+      cameraTouchId = null;
+      looking = false;
+      e.preventDefault();
+      break;
+    }
+  }
+});
+
+const jumpSpeed = 0.25;
+let velocityY = 0;
+let onGround = false;
+let jumpPressed = false;
+
+
+function jump(){
+  if(onGround){
+    velocityY = jumpSpeed;
+    onGround = false;
+  }
+}
+jumpButton.addEventListener("touchstart", e=>{
+  e.preventDefault();
+  jumpPressed = true;
+  jump();
+});
+jumpButton.addEventListener("touchend", e=>{
+  e.preventDefault();
+  jumpPressed = false;
+});
+
+// Cámara toggle 1ra/3ra persona
+const camToggleBtn = document.getElementById("camera-toggle");
+let firstPerson = false;
+camToggleBtn.addEventListener("click", () => {
+  firstPerson = !firstPerson;
+  camToggleBtn.textContent = firstPerson ? "1ra Persona" : "3ra Persona";
+  player.visible = !firstPerson;
+});
+
+// Función animación y lógica
+const moveSpeed = 0.1;
+
+function animate(){
+  requestAnimationFrame(animate);
+
+// Alinear jugador de espaldas a la cámara (3ra persona)
+if (!firstPerson) {
+  const camToPlayer = new THREE.Vector3().subVectors(player.position, camera.position);
+  camToPlayer.y = 0;
+  camToPlayer.normalize();
+  const angle = Math.atan2(camToPlayer.x, camToPlayer.z);
+  player.rotation.y = angle;
+}
+
+// Movimiento relativo a la cámara
+if (moveVector.lengthSq() > 0.01) {
+  // Dirección hacia donde mira la cámara
+  const camDir = new THREE.Vector3();
+  camera.getWorldDirection(camDir);
+  camDir.y = 0;
+  camDir.normalize();
+
+  // Eje lateral derecho de la cámara
+  const camRight = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize();
+
+  // Construir dirección de movimiento invirtiendo Y para corregir adelante/atrás
+  const moveDir = new THREE.Vector3();
+  moveDir.addScaledVector(camDir, -moveVector.y);    // adelante/atrás invertido
+  moveDir.addScaledVector(camRight, moveVector.x);   // izquierda/derecha natural
+  moveDir.normalize();
+
+  // Calcular y aplicar posición
+  const nextPos = player.position.clone().add(moveDir.multiplyScalar(moveSpeed));
+  const groundY = getGroundHeight(nextPos.x, nextPos.z);
+  if (nextPos.y >= groundY + 0.5) {
+    player.position.x = nextPos.x;
+    player.position.z = nextPos.z;
+  }
+}
+
+const groundHeight = getGroundHeight(player.position.x, player.position.z);
+const maxJumpHeight = groundHeight + 0.5 + salto;
+
+if ((player.position.y < maxJumpHeight && velocityY > 0) || player.position.y > groundHeight + 0.5) {
+  velocityY -= gravedad;
+  onGround = false;
+} else {
+  if (player.position.y >= maxJumpHeight) {
+    velocityY = Math.min(velocityY, 0);
+    player.position.y = maxJumpHeight;
+  } else {
+    velocityY = 0;
+    player.position.y = groundHeight + 0.5;
+    onGround = true;
+  }
+}
+
+player.position.y += velocityY;
+
+  if(firstPerson){
+  const eyeHeight = 0.9;
+  cameraHolder.position.copy(player.position);
+  cameraHolder.position.y += eyeHeight;
+
+  cameraHolder.rotation.y = camYaw;
+
+  camera.position.set(0,0,0);
+  camera.rotation.set(camPitch, 0, 0);
+} else {
+  // ... tu código para tercera persona
+
+
+// 3ra persona orbita alrededor jugador
+const maxPitch = Math.PI / 3;
+const minPitch = -maxPitch;
+const pitch = Math.max(minPitch, Math.min(maxPitch, camPitch));
+
+// Offset base: distancia fija DETRÁS del jugador en Z positivo
+let offset = new THREE.Vector3(0, 0, camDistance);
+
+// Aplicar rotación vertical (pitch) alrededor eje X
+offset.applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
+
+// Aplicar rotación horizontal (yaw) alrededor eje Y
+offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), camYaw);
+
+const camPos = player.position.clone().add(offset);
+camera.position.lerp(camPos, 0.15);
+
+// Mirar al jugador un poco arriba (cabeza)
+const lookTarget = player.position.clone();
+lookTarget.y += 1;
+camera.lookAt(lookTarget);
+}
+
+  renderer.render(scene, camera);
+}
+
+window.addEventListener("resize", ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+generateTerrain();
+animate();
+</script>
+
+</body>
+</html>
