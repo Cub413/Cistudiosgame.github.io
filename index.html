@@ -102,7 +102,13 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHei
 const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
 document.body.appendChild(renderer.domElement);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
 // Cámara contenedor para evitar inclinación diagonal
 const cameraHolder = new THREE.Object3D();
 cameraHolder.add(camera);
@@ -111,9 +117,19 @@ scene.add(cameraHolder);
 // Luz
 scene.background = new THREE.Color(0x87CEEB);
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
 dirLight.position.set(10,20,10);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 50;
+dirLight.shadow.camera.left = -20;
+dirLight.shadow.camera.right = 20;
+dirLight.shadow.camera.top = 20;
+dirLight.shadow.camera.bottom = -20;
 scene.add(dirLight);
+
 const salto = 1; // altura de salto en bloques
 const gravedadBase = 0.02;
 const gravedad = gravedadBase * salto;  // mayor salto = más gravedad para mantener tiempos similares
@@ -146,6 +162,7 @@ function createBlock(x,y,z,type){
     new THREE.Vector3(0,0,1),
     new THREE.Vector3(0,0,-1)
   ];
+  
   const isSurrounded = directions.every(dir=>{
     const neighborPos = pos.clone().add(dir);
     return terrain.some(b=>
@@ -185,9 +202,12 @@ function createBlock(x,y,z,type){
     materials.push(hasNeighbor ? new THREE.MeshStandardMaterial({visible:false}) : new THREE.MeshStandardMaterial({map:textureMaps[i]}));
   }
   const block = new THREE.Mesh(geometry, materials);
-  block.position.set(x*blockSize,y*blockSize,z*blockSize);
-  scene.add(block);
-  terrain.push(block);
+block.castShadow = true;
+block.receiveShadow = true;
+block.position.set(x*blockSize,y*blockSize,z*blockSize);
+scene.add(block);
+terrain.push(block);
+
 }
 
 function generateTerrain(){
@@ -209,7 +229,12 @@ function generateTerrain(){
 const playerGeometry = new THREE.BoxGeometry(0.8,1,0.8);
 const playerMaterial = new THREE.MeshStandardMaterial({color:0xff0000});
 const player = new THREE.Mesh(playerGeometry, playerMaterial);
+player.castShadow = true;
+player.receiveShadow = true;
+
 scene.add(player);
+
+
 
 const raycaster = new THREE.Raycaster();
 const down = new THREE.Vector3(0,-1,0);
@@ -367,107 +392,117 @@ const moveSpeed = 0.1;
 function animate(){
   requestAnimationFrame(animate);
 
-// Alinear jugador de espaldas a la cámara (3ra persona)
-if (!firstPerson) {
-  const camToPlayer = new THREE.Vector3().subVectors(player.position, camera.position);
-  camToPlayer.y = 0;
-  camToPlayer.normalize();
-  const angle = Math.atan2(camToPlayer.x, camToPlayer.z);
-  player.rotation.y = angle;
-}
-
-// Movimiento relativo a la cámara
-if (moveVector.lengthSq() > 0.01) {
-  // Dirección hacia donde mira la cámara
-  const camDir = new THREE.Vector3();
-  camera.getWorldDirection(camDir);
-  camDir.y = 0;
-  camDir.normalize();
-
-  // Eje lateral derecho de la cámara
-  const camRight = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize();
-
-  // Construir dirección de movimiento invirtiendo Y para corregir adelante/atrás
-  const moveDir = new THREE.Vector3();
-  moveDir.addScaledVector(camDir, -moveVector.y);    // adelante/atrás invertido
-  moveDir.addScaledVector(camRight, moveVector.x);   // izquierda/derecha natural
-  moveDir.normalize();
-
-  // Calcular y aplicar posición
-  const nextPos = player.position.clone().add(moveDir.multiplyScalar(moveSpeed));
-  const groundY = getGroundHeight(nextPos.x, nextPos.z);
-  if (nextPos.y >= groundY + 0.5) {
-    player.position.x = nextPos.x;
-    player.position.z = nextPos.z;
+  // Alinear jugador de espaldas a la cámara (3ra persona)
+  if (!firstPerson) {
+    const camToPlayer = new THREE.Vector3().subVectors(player.position, camera.position);
+    camToPlayer.y = 0;
+    camToPlayer.normalize();
+    const angle = Math.atan2(camToPlayer.x, camToPlayer.z);
+    player.rotation.y = angle;
   }
-}
 
-const groundHeight = getGroundHeight(player.position.x, player.position.z);
-const maxJumpHeight = groundHeight + 0.5 + salto;
+  // Movimiento relativo a la cámara con colisión volumétrica
+  if (moveVector.lengthSq() > 0.01) {
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+    camDir.y = 0;
+    camDir.normalize();
 
-if ((player.position.y < maxJumpHeight && velocityY > 0) || player.position.y > groundHeight + 0.5) {
-  velocityY -= gravedad;
-  onGround = false;
-} else {
-  if (player.position.y >= maxJumpHeight) {
-    velocityY = Math.min(velocityY, 0);
-    player.position.y = maxJumpHeight;
+    const camRight = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize();
+
+    const moveDir = new THREE.Vector3();
+    moveDir.addScaledVector(camDir, -moveVector.y);
+    moveDir.addScaledVector(camRight, moveVector.x);
+    moveDir.normalize();
+
+    const nextPos = player.position.clone().add(moveDir.multiplyScalar(moveSpeed));
+
+    // Colisión volumétrica con 5 puntos alrededor del jugador
+    const playerRadius = 0.4;
+    const checkOffsets = [
+      new THREE.Vector2(0, 0),
+      new THREE.Vector2(playerRadius, 0),
+      new THREE.Vector2(-playerRadius, 0),
+      new THREE.Vector2(0, playerRadius),
+      new THREE.Vector2(0, -playerRadius)
+    ];
+
+    let canMove = true;
+    for (let offset of checkOffsets) {
+      const testX = nextPos.x + offset.x;
+      const testZ = nextPos.z + offset.y;
+      const groundY = getGroundHeight(testX, testZ);
+      if (nextPos.y < groundY + 0.5) {
+        canMove = false;
+        break;
+      }
+    }
+
+    if (canMove) {
+      player.position.x = nextPos.x;
+      player.position.z = nextPos.z;
+    }
+  }
+
+  // Gravedad y salto
+  const groundHeight = getGroundHeight(player.position.x, player.position.z);
+  const maxJumpHeight = groundHeight + 0.5 + salto;
+
+  if ((player.position.y < maxJumpHeight && velocityY > 0) || player.position.y > groundHeight + 0.5) {
+    velocityY -= gravedad;
+    onGround = false;
   } else {
-    velocityY = 0;
-    player.position.y = groundHeight + 0.5;
-    onGround = true;
+    if (player.position.y >= maxJumpHeight) {
+      velocityY = Math.min(velocityY, 0);
+      player.position.y = maxJumpHeight;
+    } else {
+      velocityY = 0;
+      player.position.y = groundHeight + 0.5;
+      onGround = true;
+    }
   }
-}
 
-player.position.y += velocityY;
+  player.position.y += velocityY;
 
   if(firstPerson){
-  const eyeHeight = 0.9;
-  cameraHolder.position.copy(player.position);
-  cameraHolder.position.y += eyeHeight;
+    const eyeHeight = 0.9;
+    cameraHolder.position.copy(player.position);
+    cameraHolder.position.y += eyeHeight;
 
-  cameraHolder.rotation.y = camYaw;
+    cameraHolder.rotation.y = camYaw;
 
-  camera.position.set(0,0,0);
-  camera.rotation.set(camPitch, 0, 0);
-} else {
-  // ... tu código para tercera persona
+    camera.position.set(0,0,0);
+    camera.rotation.set(camPitch, 0, 0);
+  } else {
+    // Cámara en tercera persona: orbita alrededor del jugador
+    const maxPitch = Math.PI / 3;
+    const minPitch = -maxPitch;
+    const pitch = Math.max(minPitch, Math.min(maxPitch, camPitch));
 
+    let offset = new THREE.Vector3(0, 0, camDistance);
+    offset.applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
+    offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), camYaw);
 
-// 3ra persona orbita alrededor jugador
-const maxPitch = Math.PI / 3;
-const minPitch = -maxPitch;
-const pitch = Math.max(minPitch, Math.min(maxPitch, camPitch));
+    const camPos = player.position.clone().add(offset);
+    camera.position.lerp(camPos, 0.15);
 
-// Offset base: distancia fija DETRÁS del jugador en Z positivo
-let offset = new THREE.Vector3(0, 0, camDistance);
-
-// Aplicar rotación vertical (pitch) alrededor eje X
-offset.applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
-
-// Aplicar rotación horizontal (yaw) alrededor eje Y
-offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), camYaw);
-
-const camPos = player.position.clone().add(offset);
-camera.position.lerp(camPos, 0.15);
-
-// Mirar al jugador un poco arriba (cabeza)
-const lookTarget = player.position.clone();
-lookTarget.y += 1;
-camera.lookAt(lookTarget);
-}
+    const lookTarget = player.position.clone();
+    lookTarget.y += 1;
+    camera.lookAt(lookTarget);
+  }
 
   renderer.render(scene, camera);
 }
 
 window.addEventListener("resize", ()=>{
-  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
 generateTerrain();
 animate();
+
 </script>
 
 </body>
