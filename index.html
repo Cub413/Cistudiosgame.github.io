@@ -5,9 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Bloxd.io + Cámara 1ra/3ra persona + Mira + Salto corregido</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
 <style>
-  body { margin: 0; overflow: hidden; touch-action: none; background:#87CEEB; }
+  body { margin: 0; overflow: hidden;
+  font-family: 'Press Start 2P', cursive;touch-action: none; background:#87CEEB; }
+  
+
  #joystick {
   position: absolute; bottom: 30px; left: 30px;
   width: 100px; height: 100px;
@@ -26,22 +32,25 @@
     left: 35px;
     top: 35px;
   }
-  #pause-button {
+ #pause-button {
   position: absolute;
-  top: 10px;
+  top: 1px;
   left: 50%;
   transform: translateX(-50%);
-  width: 100px;
-  height: 40px;
-  background: #222;
+  width: 30px;
+  height: 30px;
+  background-color: #222;
   color: #fff;
-  font-size: 16px;
-  text-align: center;
-  line-height: 40px;
-  border-radius: 5px;
-  z-index: 20;
-  cursor: pointer;
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  user-select: none;
+  touch-action: none;
+  z-index: 10;
 }
+
 #shadow-toggle {
   position: absolute;
   top: 60px;
@@ -54,7 +63,7 @@
   font-size: 14px;
   text-align: center;
   line-height: 40px;
-  border-radius: 20px;
+  
   z-index: 20;
   cursor: pointer;
 }
@@ -91,8 +100,8 @@
   position: absolute;
   bottom: 59px;
   right: 50px;
-  width: 64px;
-  height: 64px;
+  width: 34px;
+  height: 34px;
   background-color: #3c3c3c;
   border: 4px solid #fff;
   box-shadow: inset -4px -4px 0 #1a1a1a, inset 4px 4px 0 #666;
@@ -104,22 +113,34 @@
   z-index: 10;
 }
 
-  #camera-toggle {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 110px;
-    height: 40px;
-    background: #444;
-    color: #fff;
-    font-size: 14px;
-    text-align: center;
-    line-height: 40px;
-    border-radius: 5px;
-    user-select: none;
-    cursor: pointer;
-    z-index: 10;
-  }
+#camera-toggle {
+position: absolute;
+top: 10px;
+right: 10px;
+width: 50px;
+height: 40px;
+background-color: #222;
+color: #e0e0e0;
+font-size: 9px;
+font-weight: 600;
+text-align: center;
+line-height: 40px;
+
+box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+user-select: none;
+cursor: pointer;
+transition: background-color 0.25s ease, color 0.25s ease;
+z-index: 10;
+}
+#camera-toggle\:hover {
+background: #666;
+color: #fff;
+}
+#camera-toggle\:active {
+background: #444;
+color: #ccc;
+}
+
   #crosshair {
     position: absolute;
     top: 50%;
@@ -148,6 +169,23 @@
     width: 20px;
     height: 2px;
   }
+  #pri-button {
+  position: absolute;
+  top: 100px;
+  right: 10px;
+  width: 64px;
+  height: 40px;
+  background-color: #800;
+  color: white;
+  text-align: center;
+  line-height: 40px;
+  font-weight: bold;
+  
+  z-index: 10;
+  user-select: none;
+  touch-action: none;
+}
+
   #slide-panel {
   position: fixed;
   top: 0;
@@ -178,16 +216,18 @@
 </style>
 </head>
 <body>
-<div id="pause-button">⏸️ </div>
+<div id="pause-button"><i class="fas fa-pause"></i></div>
+
 
 <div id="pause-menu">
-   <div class="pause-option" id="resume-btn">▶️ Reanudar</div>
-  <div id="open-panel-btn" class="pause-option">⚙️ajustes</div>
+  <div class="pause-option" id="resume-btn"><i class="fas fa-play"></i> Reanudar</div>
+<div id="open-panel-btn" class="pause-option"><i class="fas fa-cog"></i> Ajustes</div>
+
 
 <div id="slide-panel">
   <div id="close-panel-btn">×</div>
   <!-- Contenido del panel -->
-  <h3>ajustes</h3>
+
     <div id="shadow-toggle">Sombras: OFF</div>
 </div>
 
@@ -204,7 +244,9 @@
 
 <div id="joystick"><div id="joystick-thumb"></div></div>
 <div id="jump-button"></div>
-<div id="camera-toggle">3ra Persona</div>
+<div id="camera-toggle">3ra </div>
+<div id="pri-button">pri</div>
+
 <div id="crosshair"></div>
 
 <script>
@@ -251,6 +293,27 @@ const salto = 1; // altura de salto en bloques
 const gravedadBase = 0.02;
 const gravedad = gravedadBase * salto;  // mayor salto = más gravedad para mantener tiempos similares
 
+function estaRodeado(bloque) {
+  const dirs = [
+    new THREE.Vector3(1,0,0),
+    new THREE.Vector3(-1,0,0),
+    new THREE.Vector3(0,1,0),
+    new THREE.Vector3(0,-1,0),
+    new THREE.Vector3(0,0,1),
+    new THREE.Vector3(0,0,-1)
+  ];
+
+  const pos = bloque.position.clone().divideScalar(blockSize);
+
+  return dirs.every(dir => {
+    const vecino = terrain.find(b =>
+      b.position.x === (pos.x + dir.x) * blockSize &&
+      b.position.y === (pos.y + dir.y) * blockSize &&
+      b.position.z === (pos.z + dir.z) * blockSize
+    );
+    return !!vecino;
+  });
+}
 
 // Terreno básico con bloques
 const simplex = new SimplexNoise();
@@ -261,12 +324,16 @@ let joystickTouchId = null;
 let cameraTouchId = null;
 
 const textureLoader = new THREE.TextureLoader();
+
 const textures = {
   grass_top: textureLoader.load("Texturas/cesped.jpg"),
   grass_side: textureLoader.load("Texturas/cesped_parte_costado.jpg"),
   dirt: textureLoader.load("Texturas/tierra.jpg"),
-  stone: textureLoader.load("Texturas/piedra.jpg")
+  stone: textureLoader.load("Texturas/piedra.jpg"),
+  crack: textureLoader.load("Texturas/crack.png") // ← se añadió aquí
 };
+
+
 const jumpButton = document.getElementById("jump-button");
 
 function createBlock(x,y,z,type){
@@ -319,11 +386,22 @@ function createBlock(x,y,z,type){
     materials.push(hasNeighbor ? new THREE.MeshStandardMaterial({visible:false}) : new THREE.MeshStandardMaterial({map:textureMaps[i]}));
   }
   const block = new THREE.Mesh(geometry, materials);
+  block.userData = {
+  type: type,
+  resistance: type === "stone" ? 3 : type === "dirt" ? 1.5 : 1,
+  currentBreak: 0,
+  crackMaterial: null
+};
+
 block.castShadow = true;
 block.receiveShadow = true;
 block.position.set(x*blockSize,y*blockSize,z*blockSize);
-scene.add(block);
+if (!estaRodeado(block)) {
+  scene.add(block);
+}
+
 terrain.push(block);
+
 
 }
 
@@ -344,7 +422,7 @@ function generateTerrain(){
 
 // Jugador cubo rojo
 const playerGeometry = new THREE.BoxGeometry(0.8,1,0.8);
-const playerMaterial = new THREE.MeshStandardMaterial({color:0xff0000});
+const playerMaterial = new THREE.MeshStandardMaterial({color:0x0000ff});
 const player = new THREE.Mesh(playerGeometry, playerMaterial);
 player.castShadow = true;
 player.receiveShadow = true;
@@ -554,12 +632,73 @@ const camToggleBtn = document.getElementById("camera-toggle");
 let firstPerson = false;
 camToggleBtn.addEventListener("click", () => {
   firstPerson = !firstPerson;
-  camToggleBtn.textContent = firstPerson ? "1ra Persona" : "3ra Persona";
+  camToggleBtn.textContent = firstPerson ? "1ra" : "3ra";
   player.visible = !firstPerson;
 });
 
 // Función animación y lógica
 const moveSpeed = 0.3;
+const priButton = document.getElementById("pri-button");
+
+let breaking = false;
+let currentTarget = null;
+let breakStartTime = 0;
+
+priButton.addEventListener("touchstart", () => {
+  raycaster.setFromCamera({x: 0, y: 0}, camera);
+  const intersects = raycaster.intersectObjects(terrain);
+  if (intersects.length > 0) {
+    currentTarget = intersects[0].object;
+    breakStartTime = performance.now();
+    breaking = true;
+  }
+});
+
+priButton.addEventListener("touchend", () => {
+  breaking = false;
+  if (currentTarget) {
+    removeCrackOverlay(currentTarget);
+    currentTarget.userData.currentBreak = 0;
+    currentTarget = null;
+  }
+});
+
+function applyCrackOverlay(block, progress) {
+  if (!block.material || !block.material.length) return;
+
+  for (let i = 0; i < block.material.length; i++) {
+    block.material[i].alphaMap = textures.crack;
+    block.material[i].transparent = true;
+    block.material[i].opacity = 0.6 + 0.4 * Math.sin(progress * Math.PI);
+    block.material[i].needsUpdate = true;
+  }
+}
+
+function removeCrackOverlay(block) {
+  if (!block.material || !block.material.length) return;
+
+  for (let i = 0; i < block.material.length; i++) {
+    block.material[i].alphaMap = null;
+    block.material[i].opacity = 1;
+    block.material[i].transparent = false;
+    block.material[i].needsUpdate = true;
+  }
+}
+const maxBreakDistance = 3;
+
+priButton.addEventListener("touchstart", () => {
+  raycaster.setFromCamera({x: 0, y: 0}, camera);
+  const intersects = raycaster.intersectObjects(terrain);
+  if (intersects.length > 0) {
+    const target = intersects[0].object;
+    const distance = camera.position.distanceTo(target.position);
+    if (distance <= maxBreakDistance) {
+      currentTarget = target;
+      breakStartTime = performance.now();
+      breaking = true;
+    }
+  }
+});
 
 function animate() {
   requestAnimationFrame(animate);
@@ -584,7 +723,7 @@ const enableStepUp = false;
 
   const playerRadius = 0.3;
   const playerHeight = 1.5;
-  const stepHeight = 0.4;
+  const stepHeight = 0.1;
   let canMove = true;
 
   // Verificamos 3 puntos en vertical: pies, centro y cabeza
@@ -656,6 +795,31 @@ const enableStepUp = false;
     }
   }
 }
+if (breaking && currentTarget && terrain.includes(currentTarget)) {
+  const distance = camera.position.distanceTo(currentTarget.position);
+  if (distance > maxBreakDistance) {
+    // Se alejó demasiado, cancelar romper
+    breaking = false;
+    removeCrackOverlay(currentTarget);
+    currentTarget.userData.currentBreak = 0;
+    currentTarget = null;
+  } else {
+    const delta = 0.016;
+    const data = currentTarget.userData;
+    data.currentBreak += delta;
+
+    const progress = data.currentBreak / data.resistance;
+    applyCrackOverlay(currentTarget, progress);
+
+    if (data.currentBreak >= data.resistance) {
+      scene.remove(currentTarget);
+      const idx = terrain.indexOf(currentTarget);
+      if (idx !== -1) terrain.splice(idx, 1);
+      currentTarget = null;
+      breaking = false;
+    }
+  }
+}
 
   // Gravedad y salto
   const groundCheckOffsets = [
@@ -720,12 +884,104 @@ for (let offset of groundCheckOffsets) {
     // Girar jugador con la cámara
     player.rotation.y = camYaw;
   }
+if (breaking && currentTarget && terrain.includes(currentTarget)) {
+  const delta = 0.016;
+  const data = currentTarget.userData;
+  data.currentBreak += delta;
+
+  const progress = data.currentBreak / data.resistance;
+  applyCrackOverlay(currentTarget, progress);
+
+  if (data.currentBreak >= data.resistance) {
+  scene.remove(currentTarget);
+  const idx = terrain.indexOf(currentTarget);
+  if (idx !== -1) terrain.splice(idx, 1);
+
+  actualizarVecinos(currentTarget); // ← ACTUALIZA los vecinos
+
+  currentTarget = null;
+  breaking = false;
+}
+
+}
 
   renderer.render(scene, camera);
 }
 
 generateTerrain();
 animate();
+function actualizarVecinos(bloqueRoto) {
+  const dirs = [
+    new THREE.Vector3(1,0,0),
+    new THREE.Vector3(-1,0,0),
+    new THREE.Vector3(0,1,0),
+    new THREE.Vector3(0,-1,0),
+    new THREE.Vector3(0,0,1),
+    new THREE.Vector3(0,0,-1)
+  ];
+
+  const pos = bloqueRoto.position.clone().divideScalar(blockSize);
+
+  for (let i = 0; i < dirs.length; i++) {
+    const vecinoPos = pos.clone().add(dirs[i]);
+
+    const vecino = terrain.find(b =>
+      b.position.x === vecinoPos.x * blockSize &&
+      b.position.y === vecinoPos.y * blockSize &&
+      b.position.z === vecinoPos.z * blockSize
+    );
+
+    if (!vecino) continue;
+
+    const tipo = vecino.userData.type;
+    const texturas = (() => {
+      if(tipo==="grass"){
+        return [
+          textures.grass_side,
+          textures.grass_side,
+          textures.grass_top,
+          textures.dirt,
+          textures.grass_side,
+          textures.grass_side
+        ];
+      } else if(tipo==="dirt") {
+        return new Array(6).fill(textures.dirt);
+      } else if(tipo==="stone") {
+        return new Array(6).fill(textures.stone);
+      }
+    })();
+
+    const nuevaGeo = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+    const nuevaMat = [];
+
+    for (let j = 0; j < 6; j++) {
+      const dir = dirs[j];
+      const vecinoDeVecino = pos.clone().add(dirs[j]);
+
+      const bloqueOcultando = terrain.find(b =>
+        b !== vecino &&
+        b.position.x === vecino.position.x + dir.x * blockSize &&
+        b.position.y === vecino.position.y + dir.y * blockSize &&
+        b.position.z === vecino.position.z + dir.z * blockSize
+      );
+
+      nuevaMat.push(
+        bloqueOcultando
+          ? new THREE.MeshStandardMaterial({ visible: false })
+          : new THREE.MeshStandardMaterial({ map: texturas[j] })
+      );
+    }
+
+    vecino.geometry.dispose();
+    vecino.geometry = nuevaGeo;
+    vecino.material.forEach(m => m.dispose());
+    vecino.material = nuevaMat;
+    if (!scene.children.includes(vecino) && !estaRodeado(vecino)) {
+  scene.add(vecino);
+}
+
+  }
+}
 
 </script>
 
