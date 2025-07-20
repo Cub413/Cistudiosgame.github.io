@@ -212,10 +212,43 @@ color: #ccc;
   cursor: pointer;
   user-select: none;
 }
+#start-panel {
+  position: fixed;
+  inset: 0;
+  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
 
+#play-button {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 16px;
+  padding: 16px 32px;
+  border: 3px solid #fff;
+  background-color: #222;
+  color: #0f0;
+  cursor: pointer;
+  box-shadow: 0 0 5px #0f0;
+  image-rendering: pixelated;
+  text-shadow: 1px 1px 0 #000;
+}
+
+#play-button:active {
+  transform: scale(0.95);
+}
+
+/* Fuente pixel */
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 </style>
 </head>
 <body>
+  <div id="start-panel">
+  <button id="play-button">JUGAR</button>
+</div>
+
 <div id="pause-button"><i class="fas fa-pause"></i></div>
 
 
@@ -258,6 +291,25 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+// Función para redimensionar correctamente
+function resizeCanvas() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  renderer.setSize(width, height);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+}
+
+// Eventos para detectar rotación o cambio de tamaño
+window.addEventListener('resize', resizeCanvas);
+screen.orientation?.addEventListener("change", resizeCanvas);
+document.addEventListener("fullscreenchange", resizeCanvas);
+
+// Llamar al inicio por si ya está en horizontal
+resizeCanvas();
+
 
 document.body.appendChild(renderer.domElement);
 renderer.shadowMap.enabled = true;
@@ -275,7 +327,7 @@ loader.load('Texturas/dia.jpg', function(texture) {
 
 // Luz
 scene.background = new THREE.Color(0xffffff);
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
 dirLight.position.set(10,20,10);
 dirLight.castShadow = true;
@@ -332,8 +384,59 @@ const textures = {
   stone: textureLoader.load("Texturas/piedra.jpg"),
   crack: textureLoader.load("Texturas/crack.png") // ← se añadió aquí
 };
+const panel = document.getElementById("start-panel");
+const button = document.getElementById("play-button");
 
+async function goFullscreenLandscape() {
+  try {
+    // Fullscreen
+    const el = document.documentElement;
+    if (el.requestFullscreen) await el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+    
+    // Orientación horizontal
+    if (screen.orientation?.lock)
+      await screen.orientation.lock("landscape");
+  } catch (e) {
+    console.warn("No se pudo activar fullscreen u orientación:", e);
+  }
+  async function goFullscreenLandscape() {
+  try {
+    const el = document.documentElement;
+    if (el.requestFullscreen) await el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
 
+    if (screen.orientation?.lock)
+      await screen.orientation.lock("landscape");
+
+    resizeCanvas(); // Asegura que se actualice al instante
+  } catch (e) {
+    console.warn("No se pudo activar fullscreen u orientación:", e);
+  }
+
+  panel.style.display = "none";
+}
+
+  // Ocultar panel
+  panel.style.display = "none";
+}
+
+// Mostrar el panel si se salió de fullscreen u orientación
+function checkState() {
+  const isFull = !!document.fullscreenElement;
+  const isLandscape = screen.orientation?.type?.includes("landscape");
+  
+  if (!isFull || !isLandscape) {
+    panel.style.display = "flex";
+  }
+}
+
+button.addEventListener("click", goFullscreenLandscape);
+document.addEventListener("fullscreenchange", checkState);
+screen.orientation?.addEventListener("change", checkState);
+
+// También se comprueba al rotar el dispositivo
+window.addEventListener("resize", checkState);
 const jumpButton = document.getElementById("jump-button");
 
 function createBlock(x,y,z,type){
@@ -684,7 +787,7 @@ function removeCrackOverlay(block) {
     block.material[i].needsUpdate = true;
   }
 }
-const maxBreakDistance = 3;
+const maxBreakDistance = 6;
 
 priButton.addEventListener("touchstart", () => {
   raycaster.setFromCamera({x: 0, y: 0}, camera);
