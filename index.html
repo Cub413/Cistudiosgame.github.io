@@ -8,40 +8,102 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
 <style>
   body { margin: 0; overflow: hidden; touch-action: none; background:#87CEEB; }
-  #joystick {
-    position: absolute;
-    bottom: 50px;
-    left: 50px;
-    width: 100px;
-    height: 100px;
-    background-color: rgba(0,0,0,0.5);
-    border-radius: 50%;
-    user-select: none;
-    touch-action: none;
-    z-index: 10;
-  }
+ #joystick {
+  position: absolute; bottom: 30px; left: 30px;
+  width: 100px; height: 100px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid #888;
+  image-rendering: pixelated;
+}
+
   #joystick > div {
     position: absolute;
     width: 30px;
     height: 30px;
     background-color: rgba(255,255,255,0.7);
-    border-radius: 50%;
+    
     pointer-events: none;
     left: 35px;
     top: 35px;
   }
-  #jump-button {
-    position: absolute;
-    bottom: 59px;
-    right: 50px;
-    width: 70px;
-    height: 70px;
-    background-color: rgba(1,3,255,1);
-    border-radius: 0%;
-    user-select: none;
-    touch-action: none;
-    z-index: 10;
-  }
+  #pause-button {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100px;
+  height: 40px;
+  background: #222;
+  color: #fff;
+  font-size: 16px;
+  text-align: center;
+  line-height: 40px;
+  border-radius: 5px;
+  z-index: 20;
+  cursor: pointer;
+}
+#shadow-toggle {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 140px;
+  height: 40px;
+  background-color: #444;
+  color: white;
+  font-size: 14px;
+  text-align: center;
+  line-height: 40px;
+  border-radius: 20px;
+  z-index: 20;
+  cursor: pointer;
+}
+#shadow-toggle.on {
+  background-color: #27ae60;
+}
+
+#pause-menu {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  backdrop-filter: blur(10px);
+  background-color: rgba(0,0,0,0.4);
+  z-index: 30;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+.pause-option {
+  width: 160px;
+  margin: 10px;
+  padding: 12px;
+  background: #333;
+  color: white;
+  font-size: 18px;
+  text-align: center;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+#jump-button {
+  position: absolute;
+  bottom: 59px;
+  right: 50px;
+  width: 64px;
+  height: 64px;
+  background-color: #3c3c3c;
+  border: 4px solid #fff;
+  box-shadow: inset -4px -4px 0 #1a1a1a, inset 4px 4px 0 #666;
+  image-rendering: pixelated;
+  cursor: pointer;
+  border-radius: 0%;
+  user-select: none;
+  touch-action: none;
+  z-index: 10;
+}
+
   #camera-toggle {
     position: absolute;
     top: 10px;
@@ -86,9 +148,59 @@
     width: 20px;
     height: 2px;
   }
+  #slide-panel {
+  position: fixed;
+  top: 0;
+  right: -300px;
+  width: 300px;
+  height: 100vh;
+  background: #222;
+  color: white;
+  padding: 20px;
+  box-shadow: -3px 0 10px rgba(0,0,0,0.7);
+  transition: right 0.3s ease;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+
+#slide-panel.open {
+  right: 0;
+}
+
+#close-panel-btn {
+  align-self: flex-end;
+  font-size: 24px;
+  cursor: pointer;
+  user-select: none;
+}
+
 </style>
 </head>
 <body>
+<div id="pause-button">⏸️ </div>
+
+<div id="pause-menu">
+   <div class="pause-option" id="resume-btn">▶️ Reanudar</div>
+  <div id="open-panel-btn" class="pause-option">⚙️ajustes</div>
+
+<div id="slide-panel">
+  <div id="close-panel-btn">×</div>
+  <!-- Contenido del panel -->
+  <h3>ajustes</h3>
+    <div id="shadow-toggle">Sombras: OFF</div>
+</div>
+
+
+
+ 
+
+  <div id="settings-menu" style="display:none; flex-direction: column; align-items: center; justify-content: center; height: 100vh; width: 100vw; position: absolute; top: 0; left: 0; backdrop-filter: blur(10px); background-color: rgba(0,0,0,0.4); z-index: 40;">
+  <div class="pause-option" id="back-btn">🔙 Volver</div>
+  <!-- Aquí luego agregas tus controles de ajustes -->
+</div>
+
+</div>
 
 <div id="joystick"><div id="joystick-thumb"></div></div>
 <div id="jump-button"></div>
@@ -109,13 +221,18 @@ document.body.appendChild(renderer.domElement);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-// Cámara contenedor para evitar inclinación diagonal
 const cameraHolder = new THREE.Object3D();
-cameraHolder.add(camera);
 scene.add(cameraHolder);
+cameraHolder.add(camera);
+
+const loader = new THREE.TextureLoader();
+loader.load('Texturas/dia.jpg', function(texture) {
+  texture.mapping = THREE.EquirectangularReflectionMapping;
+  scene.background = texture;
+});
 
 // Luz
-scene.background = new THREE.Color(0x87CEEB);
+scene.background = new THREE.Color(0xffffff);
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
 dirLight.position.set(10,20,10);
@@ -249,6 +366,61 @@ function getGroundHeight(x,z){
 
 player.position.set(worldSize/2,10,worldSize/2);
 player.position.y = getGroundHeight(player.position.x, player.position.z)+0.5;
+const pauseBtn = document.getElementById("pause-button");
+const pauseMenu = document.getElementById("pause-menu");
+const resumeBtn = document.getElementById("resume-btn");
+
+let sombrasActivas = false; // Estado inicial: desactivadas
+
+const shadowToggle = document.getElementById("shadow-toggle");
+const updateSombras = () => {
+  dirLight.castShadow = sombrasActivas;
+
+  scene.traverse(obj => {
+    if (obj.isMesh) {
+      obj.castShadow = sombrasActivas;
+      obj.receiveShadow = sombrasActivas;
+    }
+  });
+
+  shadowToggle.textContent = sombrasActivas ? "Sombras: ON" : "Sombras: OFF";
+  shadowToggle.classList.toggle("on", sombrasActivas);
+};
+const openBtn = document.getElementById('open-panel-btn');
+const slidePanel = document.getElementById('slide-panel');
+const closeBtn = document.getElementById('close-panel-btn');
+
+openBtn.addEventListener('click', () => {
+  slidePanel.classList.add('open');
+});
+
+closeBtn.addEventListener('click', () => {
+  slidePanel.classList.remove('open');
+});
+
+// Palanca
+shadowToggle.addEventListener("click", () => {
+  sombrasActivas = !sombrasActivas;
+  updateSombras();
+});
+
+// Aplicar sombras al iniciar (están apagadas)
+updateSombras();
+
+let paused = false;
+
+pauseBtn.addEventListener("click", () => {
+  paused = true;
+  pauseMenu.style.display = "flex";
+});
+
+resumeBtn.addEventListener("click", () => {
+  paused = false;
+  pauseMenu.style.display = "none";
+});
+
+
+
 
 // Variables para joystick
 const joystick = document.getElementById("joystick");
@@ -387,39 +559,42 @@ camToggleBtn.addEventListener("click", () => {
 });
 
 // Función animación y lógica
-const moveSpeed = 0.1;
+const moveSpeed = 0.3;
 
-function animate(){
+function animate() {
   requestAnimationFrame(animate);
+const enableStepUp = false;
 
-  // Alinear jugador de espaldas a la cámara (3ra persona)
-  if (!firstPerson) {
-    const camToPlayer = new THREE.Vector3().subVectors(player.position, camera.position);
-    camToPlayer.y = 0;
-    camToPlayer.normalize();
-    const angle = Math.atan2(camToPlayer.x, camToPlayer.z);
-    player.rotation.y = angle;
-  }
-
-  // Movimiento relativo a la cámara con colisión volumétrica
+  // Movimiento relativo a la cámara
   if (moveVector.lengthSq() > 0.01) {
-    const camDir = new THREE.Vector3();
-    camera.getWorldDirection(camDir);
-    camDir.y = 0;
-    camDir.normalize();
+  const camDir = new THREE.Vector3();
+  camera.getWorldDirection(camDir);
+  camDir.y = 0;
+  camDir.normalize();
 
-    const camRight = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize();
+  const camRight = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize();
 
-    const moveDir = new THREE.Vector3();
-    moveDir.addScaledVector(camDir, -moveVector.y);
-    moveDir.addScaledVector(camRight, moveVector.x);
-    moveDir.normalize();
+  const moveDir = new THREE.Vector3();
+  moveDir.addScaledVector(camDir, -moveVector.y);
+  moveDir.addScaledVector(camRight, moveVector.x);
+  moveDir.normalize();
 
-    const nextPos = player.position.clone().add(moveDir.multiplyScalar(moveSpeed));
+  const moveStep = moveDir.clone().multiplyScalar(moveSpeed);
+  const nextPos = player.position.clone().add(moveStep);
 
-    // Colisión volumétrica con 5 puntos alrededor del jugador
-    const playerRadius = 0.4;
-    const checkOffsets = [
+  const playerRadius = 0.3;
+  const playerHeight = 1.5;
+  const stepHeight = 0.4;
+  let canMove = true;
+
+  // Verificamos 3 puntos en vertical: pies, centro y cabeza
+  const yOffsets = [0, playerHeight / 2, playerHeight - 0.1];
+
+  for (let yOffset of yOffsets) {
+    const pos = nextPos.clone();
+    pos.y += yOffset;
+
+    const offsets = [
       new THREE.Vector2(0, 0),
       new THREE.Vector2(playerRadius, 0),
       new THREE.Vector2(-playerRadius, 0),
@@ -427,78 +602,127 @@ function animate(){
       new THREE.Vector2(0, -playerRadius)
     ];
 
-    let canMove = true;
-    for (let offset of checkOffsets) {
-      const testX = nextPos.x + offset.x;
-      const testZ = nextPos.z + offset.y;
+    for (let offset of offsets) {
+      const testX = pos.x + offset.x;
+      const testZ = pos.z + offset.y;
       const groundY = getGroundHeight(testX, testZ);
-      if (nextPos.y < groundY + 0.5) {
+
+      if (pos.y < groundY + 0.5) {
         canMove = false;
         break;
       }
     }
 
-    if (canMove) {
-      player.position.x = nextPos.x;
-      player.position.z = nextPos.z;
-    }
+    if (!canMove) break;
   }
 
-  // Gravedad y salto
-  const groundHeight = getGroundHeight(player.position.x, player.position.z);
-  const maxJumpHeight = groundHeight + 0.5 + salto;
+  if (canMove) {
+    player.position.copy(nextPos);
+  } else if (enableStepUp) {
+  // (resto del código sin cambios)
 
-  if ((player.position.y < maxJumpHeight && velocityY > 0) || player.position.y > groundHeight + 0.5) {
+
+    // Intentar pequeño "step up" para esquinas (como en Minecraft)
+    const stepPos = nextPos.clone();
+    stepPos.y += stepHeight;
+
+    let stepCanMove = true;
+    for (let yOffset of yOffsets) {
+      const pos = stepPos.clone();
+      pos.y += yOffset;
+
+      for (let offset of [
+        new THREE.Vector2(0, 0),
+        new THREE.Vector2(playerRadius, 0),
+        new THREE.Vector2(-playerRadius, 0),
+        new THREE.Vector2(0, playerRadius),
+        new THREE.Vector2(0, -playerRadius)
+      ]) {
+        const testX = pos.x + offset.x;
+        const testZ = pos.z + offset.y;
+        const groundY = getGroundHeight(testX, testZ);
+
+        if (pos.y < groundY + 0.5) {
+          stepCanMove = false;
+          break;
+        }
+      }
+
+      if (!stepCanMove) break;
+    }
+
+    if (stepCanMove) {
+      player.position.copy(stepPos);
+    }
+  }
+}
+
+  // Gravedad y salto
+  const groundCheckOffsets = [
+  new THREE.Vector2(0, 0),
+  new THREE.Vector2(0.3, 0),
+  new THREE.Vector2(-0.3, 0),
+  new THREE.Vector2(0, 0.3),
+  new THREE.Vector2(0, -0.3)
+];
+
+let ground = -Infinity;
+for (let offset of groundCheckOffsets) {
+  const gx = player.position.x + offset.x;
+  const gz = player.position.z + offset.y;
+  const h = getGroundHeight(gx, gz);
+  if (h > ground) ground = h;
+}
+
+  const jumpMax = ground + 0.5 + salto;
+
+  if ((player.position.y < jumpMax && velocityY > 0) || player.position.y > ground + 0.5) {
     velocityY -= gravedad;
     onGround = false;
   } else {
-    if (player.position.y >= maxJumpHeight) {
+    if (player.position.y >= jumpMax) {
       velocityY = Math.min(velocityY, 0);
-      player.position.y = maxJumpHeight;
+      player.position.y = jumpMax;
     } else {
       velocityY = 0;
-      player.position.y = groundHeight + 0.5;
+      player.position.y = ground + 0.5;
       onGround = true;
     }
   }
 
   player.position.y += velocityY;
 
-  if(firstPerson){
-    const eyeHeight = 0.9;
-    cameraHolder.position.copy(player.position);
-    cameraHolder.position.y += eyeHeight;
+  if (firstPerson) {
+  const eyeOffset = new THREE.Vector3(0, 0.4, 0); // altura de los ojos
+  const camOffset = eyeOffset.clone();
 
-    cameraHolder.rotation.y = camYaw;
+  // Aplicar rotación de la cámara manualmente
+  const quat = new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(camPitch, camYaw, 0, 'YXZ'));
+  camOffset.applyQuaternion(quat);
 
-    camera.position.set(0,0,0);
-    camera.rotation.set(camPitch, 0, 0);
-  } else {
-    // Cámara en tercera persona: orbita alrededor del jugador
-    const maxPitch = Math.PI / 3;
-    const minPitch = -maxPitch;
-    const pitch = Math.max(minPitch, Math.min(maxPitch, camPitch));
-
-    let offset = new THREE.Vector3(0, 0, camDistance);
-    offset.applyAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
+  camera.position.copy(player.position).add(camOffset);
+  camera.rotation.set(camPitch, camYaw, 0, 'YXZ');
+}
+ else {
+    // Cámara detrás del jugador
+    const offset = new THREE.Vector3(0, 1.5, camDistance);
+    offset.applyAxisAngle(new THREE.Vector3(1, 0, 0), camPitch);
     offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), camYaw);
 
     const camPos = player.position.clone().add(offset);
-    camera.position.lerp(camPos, 0.15);
+    camera.position.lerp(camPos, 0.2);
 
-    const lookTarget = player.position.clone();
-    lookTarget.y += 1;
-    camera.lookAt(lookTarget);
+    const target = player.position.clone();
+    target.y += 1;
+    camera.lookAt(target);
+
+    // Girar jugador con la cámara
+    player.rotation.y = camYaw;
   }
 
   renderer.render(scene, camera);
 }
-
-window.addEventListener("resize", ()=>{
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
 
 generateTerrain();
 animate();
