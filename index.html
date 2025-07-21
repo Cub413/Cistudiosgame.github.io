@@ -142,33 +142,34 @@ color: #ccc;
 }
 
   #crosshair {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 20px;
-    height: 20px;
-    margin-left: -10px;
-    margin-top: -10px;
-    pointer-events: none;
-    z-index: 15;
-  }
-  #crosshair:before, #crosshair:after {
-    content: '';
-    position: absolute;
-    background: black;
-  }
-  #crosshair:before {
-    left: 9px;
-    top: 0;
-    width: 2px;
-    height: 20px;
-  }
-  #crosshair:after {
-    top: 9px;
-    left: 0;
-    width: 20px;
-    height: 2px;
-  }
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  margin-left: -10px;
+  margin-top: -10px;
+  pointer-events: none;
+  z-index: 15;
+}
+#crosshair:before, #crosshair:after {
+  content: '';
+  position: absolute;
+  background: rgba(0, 0, 0, 0.5); /* negro semi-transparente */
+}
+#crosshair:before {
+  left: 9px;
+  top: 0;
+  width: 2px;
+  height: 20px;
+}
+#crosshair:after {
+  top: 9px;
+  left: 0;
+  width: 20px;
+  height: 2px;
+}
+
   #pri-button {
   position: absolute;
   top: 100px;
@@ -247,6 +248,9 @@ color: #ccc;
 <body>
   <div id="start-panel">
   <button id="play-button">JUGAR</button>
+</div>
+<div id="break-bar-container" style="position: fixed; top: 45%; left: 50%; transform: translate(-50%, -50%); width: 30px; height: 5px; border: 2px solid white; display: none;">
+  <div id="break-bar" style="background: white; width: 0%; height: 100%;"></div>
 </div>
 
 <div id="pause-button"><i class="fas fa-pause"></i></div>
@@ -345,37 +349,27 @@ const salto = 1; // altura de salto en bloques
 const gravedadBase = 0.02;
 const gravedad = gravedadBase * salto;  // mayor salto = más gravedad para mantener tiempos similares
 
-function estaRodeado(bloque) {
-  const dirs = [
-    new THREE.Vector3(1,0,0),
-    new THREE.Vector3(-1,0,0),
-    new THREE.Vector3(0,1,0),
-    new THREE.Vector3(0,-1,0),
-    new THREE.Vector3(0,0,1),
-    new THREE.Vector3(0,0,-1)
-  ];
+const texturaGrieta = loader.load('/Texturas/crack.png');
+texturaGrieta.wrapS = THREE.RepeatWrapping;
+texturaGrieta.wrapT = THREE.RepeatWrapping;
 
-  const pos = bloque.position.clone().divideScalar(blockSize);
-
-  return dirs.every(dir => {
-    const vecino = terrain.find(b =>
-      b.position.x === (pos.x + dir.x) * blockSize &&
-      b.position.y === (pos.y + dir.y) * blockSize &&
-      b.position.z === (pos.z + dir.z) * blockSize
-    );
-    return !!vecino;
-  });
-}
 
 // Terreno básico con bloques
 const simplex = new SimplexNoise();
 const blockSize = 1;
-const worldSize = 16;
+const worldSize = 10;
 let terrain = [];
 let joystickTouchId = null;
 let cameraTouchId = null;
 
 const textureLoader = new THREE.TextureLoader();
+const texturesCrack = [
+  textureLoader.load('Texturas/crack1.png'),
+  textureLoader.load('Texturas/crack2.png'),
+  textureLoader.load('Texturas/crack3.png'),
+  textureLoader.load('Texturas/crack4.png'),
+  textureLoader.load('Texturas/crack5.png'),
+];
 
 const textures = {
   grass_top: textureLoader.load("Texturas/cesped.jpg"),
@@ -393,7 +387,10 @@ async function goFullscreenLandscape() {
     const el = document.documentElement;
     if (el.requestFullscreen) await el.requestFullscreen();
     else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
-    
+    if (!estaRodeado(block)) {
+  scene.add(block);
+}
+
     // Orientación horizontal
     if (screen.orientation?.lock)
       await screen.orientation.lock("landscape");
@@ -439,29 +436,9 @@ screen.orientation?.addEventListener("change", checkState);
 window.addEventListener("resize", checkState);
 const jumpButton = document.getElementById("jump-button");
 
-function createBlock(x,y,z,type){
-  const pos = new THREE.Vector3(x,y,z);
-  const directions = [
-    new THREE.Vector3(1,0,0),
-    new THREE.Vector3(-1,0,0),
-    new THREE.Vector3(0,1,0),
-    new THREE.Vector3(0,-1,0),
-    new THREE.Vector3(0,0,1),
-    new THREE.Vector3(0,0,-1)
-  ];
-  
-  const isSurrounded = directions.every(dir=>{
-    const neighborPos = pos.clone().add(dir);
-    return terrain.some(b=>
-      b.position.x === neighborPos.x * blockSize &&
-      b.position.y === neighborPos.y * blockSize &&
-      b.position.z === neighborPos.z * blockSize
-    );
-  });
-  if(isSurrounded) return;
-
+function createBlock(x, y, z, type) {
   const textureMaps = (() => {
-    if(type==="grass"){
+    if(type === "grass") {
       return [
         textures.grass_side,
         textures.grass_side,
@@ -470,66 +447,85 @@ function createBlock(x,y,z,type){
         textures.grass_side,
         textures.grass_side
       ];
-    } else if(type==="dirt") {
+    } else if(type === "dirt") {
       return new Array(6).fill(textures.dirt);
-    } else if(type==="stone") {
+    } else if(type === "stone") {
       return new Array(6).fill(textures.stone);
     }
   })();
 
   const geometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
   const materials = [];
-  for(let i=0; i<6; i++){
-    const neighborPos = pos.clone().add(directions[i]);
-    const hasNeighbor = terrain.some(b=>
-      b.position.x === neighborPos.x * blockSize &&
-      b.position.y === neighborPos.y * blockSize &&
-      b.position.z === neighborPos.z * blockSize
-    );
-    materials.push(hasNeighbor ? new THREE.MeshStandardMaterial({visible:false}) : new THREE.MeshStandardMaterial({map:textureMaps[i]}));
+
+  for(let i = 0; i < 6; i++) {
+    materials.push(new THREE.MeshStandardMaterial({ map: textureMaps[i] }));
   }
+
   const block = new THREE.Mesh(geometry, materials);
+
   block.userData = {
-  type: type,
-  resistance: type === "stone" ? 3 : type === "dirt" ? 1.5 : 1,
-  currentBreak: 0,
-  crackMaterial: null
-};
+    type: type,
+    resistance: type === "stone" ? 3 : type === "dirt" ? 1.5 : 1,
+    currentBreak: 0,
+    crackMaterial: null
+  };
 
-block.castShadow = true;
-block.receiveShadow = true;
-block.position.set(x*blockSize,y*blockSize,z*blockSize);
-if (!estaRodeado(block)) {
+  block.castShadow = true;
+  block.receiveShadow = true;
+  block.position.set(x * blockSize, y * blockSize, z * blockSize);
+
   scene.add(block);
+  terrain.push(block);
+}
+function actualizarVisibilidadGlobal() {
+  const dirs = [
+    new THREE.Vector3(1, 0, 0),
+    new THREE.Vector3(-1, 0, 0),
+    new THREE.Vector3(0, 1, 0),
+    new THREE.Vector3(0, -1, 0),
+    new THREE.Vector3(0, 0, 1),
+    new THREE.Vector3(0, 0, -1),
+  ];
+
+  for (const bloque of terrain) {
+    const pos = bloque.position.clone().divideScalar(blockSize);
+
+    const estaRodeado = dirs.every(dir => {
+      const neighborPos = pos.clone().add(dir);
+      return terrain.some(b =>
+        b.position.x === neighborPos.x * blockSize &&
+        b.position.y === neighborPos.y * blockSize &&
+        b.position.z === neighborPos.z * blockSize
+      );
+    });
+
+    bloque.visible = !estaRodeado;
+  }
 }
 
-terrain.push(block);
-
-
-}
-
-function generateTerrain(){
+function generateTerrain() {
   terrain = [];
-  for(let x=0;x<worldSize;x++){
-    for(let z=0;z<worldSize;z++){
-      const n = simplex.noise2D(x/10,z/10);
-      const h = Math.floor((n+1)*5);
-      for(let y=0;y<h;y++){
-        if(y===h-1) createBlock(x,y,z,"grass");
-        else if(y>=h-3) createBlock(x,y,z,"dirt");
-        else createBlock(x,y,z,"stone");
+  for(let x = 0; x < worldSize; x++) {
+    for(let z = 0; z < worldSize; z++) {
+      const n = simplex.noise2D(x / 10, z / 10);
+      const h = Math.floor((n + 1) * 5);
+      for(let y = 0; y < h; y++) {
+        if(y === h - 1) createBlock(x, y, z, "grass");
+        else if(y >= h - 3) createBlock(x, y, z, "dirt");
+        else createBlock(x, y, z, "stone");
       }
     }
   }
 }
+setInterval(actualizarVisibilidadGlobal, 100);
 
-// Jugador cubo rojo
-const playerGeometry = new THREE.BoxGeometry(0.8,1,0.8);
-const playerMaterial = new THREE.MeshStandardMaterial({color:0x0000ff});
+// Geometría y dimensiones del jugador
+const playerGeometry = new THREE.BoxGeometry(0.7, 0.9, 0.7);
+const playerMaterial = new THREE.MeshStandardMaterial({ color: 0x0000ff });
 const player = new THREE.Mesh(playerGeometry, playerMaterial);
 player.castShadow = true;
 player.receiveShadow = true;
-
+scene.add(player);
 scene.add(player);
 
 
@@ -766,27 +762,60 @@ priButton.addEventListener("touchend", () => {
   }
 });
 
-function applyCrackOverlay(block, progress) {
-  if (!block.material || !block.material.length) return;
+function addCrackLayer(block, index) {
+  if (block.userData.crackOverlay) {
+    block.userData.crackOverlay.material.map = texturesCrack[index];
+    block.userData.crackOverlay.material.needsUpdate = true;
+    return;
+  }
 
-  for (let i = 0; i < block.material.length; i++) {
-    block.material[i].alphaMap = textures.crack;
-    block.material[i].transparent = true;
-    block.material[i].opacity = 0.6 + 0.4 * Math.sin(progress * Math.PI);
-    block.material[i].needsUpdate = true;
+  const crackTexture = texturesCrack[index];
+
+  const crackMaterial = new THREE.MeshBasicMaterial({
+    map: crackTexture,
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+  });
+
+  const crackMesh = new THREE.Mesh(block.geometry.clone(), crackMaterial);
+  crackMesh.position.set(0, 0, 0); // relativo al bloque
+  crackMesh.rotation.set(0, 0, 0);
+  crackMesh.scale.set(1, 1, 1);
+  crackMesh.renderOrder = 999;
+
+  block.add(crackMesh);
+  block.userData.crackOverlay = crackMesh;
+}
+
+function updateCrackLayer(block, progress) {
+  const index = Math.min(Math.floor(progress * texturesCrack.length), texturesCrack.length - 1);
+
+  if (!block.userData.crackOverlay) {
+    addCrackLayer(block, index);
+  } else {
+    block.userData.crackOverlay.material.map = texturesCrack[index];
+    block.userData.crackOverlay.material.needsUpdate = true;
   }
 }
 
 function removeCrackOverlay(block) {
-  if (!block.material || !block.material.length) return;
-
-  for (let i = 0; i < block.material.length; i++) {
-    block.material[i].alphaMap = null;
-    block.material[i].opacity = 1;
-    block.material[i].transparent = false;
-    block.material[i].needsUpdate = true;
+  const overlay = block.userData.crackOverlay;
+  if (overlay) {
+    block.remove(overlay);
+    if (overlay.geometry) {
+      overlay.geometry.dispose();
+      overlay.geometry = null;
+    }
+    if (overlay.material) {
+      overlay.material.dispose();
+      overlay.material = null;
+    }
+    block.userData.crackOverlay = null;
   }
+  // (resto igual)
 }
+
 const maxBreakDistance = 6;
 
 priButton.addEventListener("touchstart", () => {
@@ -805,141 +834,171 @@ priButton.addEventListener("touchstart", () => {
 
 function animate() {
   requestAnimationFrame(animate);
-const enableStepUp = false;
+  const enableStepUp = false;
+const breakBarContainer = document.getElementById('break-bar-container');
+const breakBar = document.getElementById('break-bar');
+
+function updateBreakBar(progress) {
+  if (progress > 0 && progress < 1) {
+    breakBarContainer.style.display = 'block';
+    breakBar.style.width = (progress * 100) + '%';
+  } else {
+    breakBarContainer.style.display = 'none';
+    breakBar.style.width = '0%';
+  }
+}
 
   // Movimiento relativo a la cámara
   if (moveVector.lengthSq() > 0.01) {
-  const camDir = new THREE.Vector3();
-  camera.getWorldDirection(camDir);
-  camDir.y = 0;
-  camDir.normalize();
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+    camDir.y = 0;
+    camDir.normalize();
 
-  const camRight = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize();
+    const camRight = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize();
 
-  const moveDir = new THREE.Vector3();
-  moveDir.addScaledVector(camDir, -moveVector.y);
-  moveDir.addScaledVector(camRight, moveVector.x);
-  moveDir.normalize();
+    const moveDir = new THREE.Vector3();
+    moveDir.addScaledVector(camDir, -moveVector.y);
+    moveDir.addScaledVector(camRight, moveVector.x);
+    moveDir.normalize();
 
-  const moveStep = moveDir.clone().multiplyScalar(moveSpeed);
-  const nextPos = player.position.clone().add(moveStep);
+    const moveStep = moveDir.clone().multiplyScalar(moveSpeed);
 
-  const playerRadius = 0.3;
-  const playerHeight = 1.5;
-  const stepHeight = 0.1;
-  let canMove = true;
+    const playerRadius = 0.3;
+const playerHeight = 0.9;
 
-  // Verificamos 3 puntos en vertical: pies, centro y cabeza
-  const yOffsets = [0, playerHeight / 2, playerHeight - 0.1];
+    const stepHeight = 0.1;
 
-  for (let yOffset of yOffsets) {
-    const pos = nextPos.clone();
-    pos.y += yOffset;
+    // 👇 NUEVO: deslizamiento por separado en X y Z
+    const moveX = new THREE.Vector3(moveStep.x, 0, 0);
+    const moveZ = new THREE.Vector3(0, 0, moveStep.z);
 
-    const offsets = [
-      new THREE.Vector2(0, 0),
-      new THREE.Vector2(playerRadius, 0),
-      new THREE.Vector2(-playerRadius, 0),
-      new THREE.Vector2(0, playerRadius),
-      new THREE.Vector2(0, -playerRadius)
-    ];
-
-    for (let offset of offsets) {
-      const testX = pos.x + offset.x;
-      const testZ = pos.z + offset.y;
-      const groundY = getGroundHeight(testX, testZ);
-
-      if (pos.y < groundY + 0.5) {
-        canMove = false;
-        break;
-      }
-    }
-
-    if (!canMove) break;
-  }
-
-  if (canMove) {
-    player.position.copy(nextPos);
-  } else if (enableStepUp) {
-  // (resto del código sin cambios)
+    const yOffsets = [0, 0.4, 0.8];
 
 
-    // Intentar pequeño "step up" para esquinas (como en Minecraft)
-    const stepPos = nextPos.clone();
-    stepPos.y += stepHeight;
+    let canMoveX = true;
+    let canMoveZ = true;
 
-    let stepCanMove = true;
+    // Comprobar colisión en X
     for (let yOffset of yOffsets) {
-      const pos = stepPos.clone();
+      const pos = player.position.clone().add(moveX);
       pos.y += yOffset;
 
-      for (let offset of [
+      const offsets = [
         new THREE.Vector2(0, 0),
         new THREE.Vector2(playerRadius, 0),
         new THREE.Vector2(-playerRadius, 0),
         new THREE.Vector2(0, playerRadius),
         new THREE.Vector2(0, -playerRadius)
-      ]) {
+      ];
+
+      let collision = false;
+      for (let offset of offsets) {
         const testX = pos.x + offset.x;
         const testZ = pos.z + offset.y;
         const groundY = getGroundHeight(testX, testZ);
 
         if (pos.y < groundY + 0.5) {
-          stepCanMove = false;
-          break;
+          collision = true;
         }
       }
-
-      if (!stepCanMove) break;
+      if (collision) canMoveX = false;
     }
 
-    if (stepCanMove) {
-      player.position.copy(stepPos);
+    // Comprobar colisión en Z
+    for (let yOffset of yOffsets) {
+      const pos = player.position.clone().add(moveZ);
+      pos.y += yOffset;
+
+      const offsets = [
+        new THREE.Vector2(0, 0),
+        new THREE.Vector2(playerRadius, 0),
+        new THREE.Vector2(-playerRadius, 0),
+        new THREE.Vector2(0, playerRadius),
+        new THREE.Vector2(0, -playerRadius)
+      ];
+
+      let collision = false;
+      for (let offset of offsets) {
+        const testX = pos.x + offset.x;
+        const testZ = pos.z + offset.y;
+        const groundY = getGroundHeight(testX, testZ);
+
+        if (pos.y < groundY + 0.5) {
+          collision = true;
+        }
+      }
+      if (collision) canMoveZ = false;
     }
+
+    // Aplicar movimiento permitido para lograr deslizamiento
+    if (canMoveX) player.position.x += moveStep.x;
+    if (canMoveZ) player.position.z += moveStep.z;
+
+    // --- El código siguiente que habías puesto para stepUp y demás queda comentado
+    // porque usás enableStepUp = false, si lo necesitás activo avisame ---
   }
-}
-if (breaking && currentTarget && terrain.includes(currentTarget)) {
+
+  if (breaking && currentTarget && terrain.includes(currentTarget)) {
   const distance = camera.position.distanceTo(currentTarget.position);
   if (distance > maxBreakDistance) {
-    // Se alejó demasiado, cancelar romper
     breaking = false;
     removeCrackOverlay(currentTarget);
     currentTarget.userData.currentBreak = 0;
     currentTarget = null;
+    updateBreakBar(0);
   } else {
     const delta = 0.016;
     const data = currentTarget.userData;
     data.currentBreak += delta;
-
     const progress = data.currentBreak / data.resistance;
-    applyCrackOverlay(currentTarget, progress);
 
-    if (data.currentBreak >= data.resistance) {
-      scene.remove(currentTarget);
-      const idx = terrain.indexOf(currentTarget);
-      if (idx !== -1) terrain.splice(idx, 1);
-      currentTarget = null;
-      breaking = false;
+    updateBreakBar(progress);
+    updateCrackLayer(currentTarget, progress); // 👈 aplicar textura encima
+
+    if (progress >= 1) {
+  removeCrackOverlay(currentTarget); // ✅ eliminar overlay antes
+  scene.remove(currentTarget);
+  const idx = terrain.indexOf(currentTarget);
+  if (idx !== -1) terrain.splice(idx, 1);
+  currentTarget = null;
+  breaking = false;
+  updateBreakBar(0);
+}
+}
+} else {
+  updateBreakBar(0);
+}
+
+function limpiarCracksFlotantes() {
+  for (const bloque of terrain) {
+    const overlay = bloque.userData.crackOverlay;
+    if (overlay) {
+      // Si el bloque fue eliminado o la grieta no coincide con el bloque
+      const posicionIgual = overlay.position.equals(bloque.position);
+      if (!scene.children.includes(bloque) || !posicionIgual) {
+        removeCrackOverlay(bloque);
+      }
     }
   }
 }
 
   // Gravedad y salto
   const groundCheckOffsets = [
-  new THREE.Vector2(0, 0),
-  new THREE.Vector2(0.3, 0),
-  new THREE.Vector2(-0.3, 0),
-  new THREE.Vector2(0, 0.3),
-  new THREE.Vector2(0, -0.3)
-];
+    new THREE.Vector2(0, 0),
+    new THREE.Vector2(0.3, 0),
+    new THREE.Vector2(-0.3, 0),
+    new THREE.Vector2(0, 0.3),
+    new THREE.Vector2(0, -0.3)
+  ];
 
-let ground = -Infinity;
-for (let offset of groundCheckOffsets) {
-  const gx = player.position.x + offset.x;
-  const gz = player.position.z + offset.y;
-  const h = getGroundHeight(gx, gz);
-  if (h > ground) ground = h;
-}
+  let ground = -Infinity;
+  for (let offset of groundCheckOffsets) {
+    const gx = player.position.x + offset.x;
+    const gz = player.position.z + offset.y;
+    const h = getGroundHeight(gx, gz);
+    if (h > ground) ground = h;
+  }
 
   const jumpMax = ground + 0.5 + salto;
 
@@ -960,18 +1019,36 @@ for (let offset of groundCheckOffsets) {
   player.position.y += velocityY;
 
   if (firstPerson) {
-  const eyeOffset = new THREE.Vector3(0, 0.4, 0); // altura de los ojos
-  const camOffset = eyeOffset.clone();
+    const eyeOffset = new THREE.Vector3(0, 0.4, 0); // altura de los ojos
+    const camOffset = eyeOffset.clone();
+if (breaking && currentTarget && terrain.includes(currentTarget)) {
+  const delta = 0.016; // tiempo entre frames (aprox 60fps)
+  const data = currentTarget.userData;
+  data.currentBreak += delta;
 
-  // Aplicar rotación de la cámara manualmente
-  const quat = new THREE.Quaternion()
-    .setFromEuler(new THREE.Euler(camPitch, camYaw, 0, 'YXZ'));
-  camOffset.applyQuaternion(quat);
+  const progress = data.currentBreak / data.resistance;
+  updateBreakBar(progress); // Actualizar barra de rompimiento
 
-  camera.position.copy(player.position).add(camOffset);
-  camera.rotation.set(camPitch, camYaw, 0, 'YXZ');
+  if (data.currentBreak >= data.resistance) {
+    scene.remove(currentTarget);
+    const idx = terrain.indexOf(currentTarget);
+    if (idx !== -1) terrain.splice(idx, 1);
+    currentTarget = null;
+    breaking = false;
+    updateBreakBar(0); // Ocultar barra al romper bloque
+  }
+} else {
+  updateBreakBar(0); // Ocultar barra si no está rompiendo
 }
- else {
+
+    // Aplicar rotación de la cámara manualmente
+    const quat = new THREE.Quaternion()
+      .setFromEuler(new THREE.Euler(camPitch, camYaw, 0, 'YXZ'));
+    camOffset.applyQuaternion(quat);
+
+    camera.position.copy(player.position).add(camOffset);
+    camera.rotation.set(camPitch, camYaw, 0, 'YXZ');
+  } else {
     // Cámara detrás del jugador
     const offset = new THREE.Vector3(0, 1.5, camDistance);
     offset.applyAxisAngle(new THREE.Vector3(1, 0, 0), camPitch);
@@ -987,104 +1064,14 @@ for (let offset of groundCheckOffsets) {
     // Girar jugador con la cámara
     player.rotation.y = camYaw;
   }
-if (breaking && currentTarget && terrain.includes(currentTarget)) {
-  const delta = 0.016;
-  const data = currentTarget.userData;
-  data.currentBreak += delta;
 
-  const progress = data.currentBreak / data.resistance;
-  applyCrackOverlay(currentTarget, progress);
-
-  if (data.currentBreak >= data.resistance) {
-  scene.remove(currentTarget);
-  const idx = terrain.indexOf(currentTarget);
-  if (idx !== -1) terrain.splice(idx, 1);
-
-  actualizarVecinos(currentTarget); // ← ACTUALIZA los vecinos
-
-  currentTarget = null;
-  breaking = false;
-}
-
-}
-
+  
   renderer.render(scene, camera);
 }
 
 generateTerrain();
 animate();
-function actualizarVecinos(bloqueRoto) {
-  const dirs = [
-    new THREE.Vector3(1,0,0),
-    new THREE.Vector3(-1,0,0),
-    new THREE.Vector3(0,1,0),
-    new THREE.Vector3(0,-1,0),
-    new THREE.Vector3(0,0,1),
-    new THREE.Vector3(0,0,-1)
-  ];
 
-  const pos = bloqueRoto.position.clone().divideScalar(blockSize);
-
-  for (let i = 0; i < dirs.length; i++) {
-    const vecinoPos = pos.clone().add(dirs[i]);
-
-    const vecino = terrain.find(b =>
-      b.position.x === vecinoPos.x * blockSize &&
-      b.position.y === vecinoPos.y * blockSize &&
-      b.position.z === vecinoPos.z * blockSize
-    );
-
-    if (!vecino) continue;
-
-    const tipo = vecino.userData.type;
-    const texturas = (() => {
-      if(tipo==="grass"){
-        return [
-          textures.grass_side,
-          textures.grass_side,
-          textures.grass_top,
-          textures.dirt,
-          textures.grass_side,
-          textures.grass_side
-        ];
-      } else if(tipo==="dirt") {
-        return new Array(6).fill(textures.dirt);
-      } else if(tipo==="stone") {
-        return new Array(6).fill(textures.stone);
-      }
-    })();
-
-    const nuevaGeo = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
-    const nuevaMat = [];
-
-    for (let j = 0; j < 6; j++) {
-      const dir = dirs[j];
-      const vecinoDeVecino = pos.clone().add(dirs[j]);
-
-      const bloqueOcultando = terrain.find(b =>
-        b !== vecino &&
-        b.position.x === vecino.position.x + dir.x * blockSize &&
-        b.position.y === vecino.position.y + dir.y * blockSize &&
-        b.position.z === vecino.position.z + dir.z * blockSize
-      );
-
-      nuevaMat.push(
-        bloqueOcultando
-          ? new THREE.MeshStandardMaterial({ visible: false })
-          : new THREE.MeshStandardMaterial({ map: texturas[j] })
-      );
-    }
-
-    vecino.geometry.dispose();
-    vecino.geometry = nuevaGeo;
-    vecino.material.forEach(m => m.dispose());
-    vecino.material = nuevaMat;
-    if (!scene.children.includes(vecino) && !estaRodeado(vecino)) {
-  scene.add(vecino);
-}
-
-  }
-}
 
 </script>
 
