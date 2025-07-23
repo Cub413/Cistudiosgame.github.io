@@ -95,6 +95,9 @@
   border-radius: 8px;
   cursor: pointer;
 }
+#collision-toggle.on {
+  background-color: #27ae60 !important;
+}
 
 #jump-button {
   position: absolute;
@@ -387,10 +390,7 @@ async function goFullscreenLandscape() {
     const el = document.documentElement;
     if (el.requestFullscreen) await el.requestFullscreen();
     else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
-    if (!estaRodeado(block)) {
-  scene.add(block);
-}
-
+    
     // Orientación horizontal
     if (screen.orientation?.lock)
       await screen.orientation.lock("landscape");
@@ -532,14 +532,63 @@ scene.add(player);
 
 const raycaster = new THREE.Raycaster();
 const down = new THREE.Vector3(0,-1,0);
+function hayEspacioParaSaltar() {
+  const start = player.position.clone().add(new THREE.Vector3(0, 0.5, 0));
+  const dir = new THREE.Vector3(0, 1, 0);
+  raycaster.ray.origin.copy(start);
+  raycaster.ray.direction.copy(dir);
 
-function getGroundHeight(x,z){
-  raycaster.ray.origin.set(x,50,z);
+  const intersects = raycaster.intersectObjects(terrain, false);
+  for (const hit of intersects) {
+    if (hit.distance <= 0.9) return false; // solo bloquea si el obstáculo está a 1.1 o menos
+  }
+
+  return true;
+}
+// Líneas de colisión y raycaster
+const debugLines = [];
+function dibujarDebugColisiones() {
+  debugLines.forEach(line => scene.remove(line));
+  debugLines.length = 0;
+
+  if (!mostrarColisiones) return;
+
+  const offsets = [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0.3, 0, 0),
+    new THREE.Vector3(-0.3, 0, 0),
+    new THREE.Vector3(0, 0, 0.3),
+    new THREE.Vector3(0, 0, -0.3)
+  ];
+
+  for (let offset of offsets) {
+    const start = player.position.clone().add(offset).setY(player.position.y);
+    const end = start.clone();
+    end.y -= 3;
+
+    const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+    const material = new THREE.LineBasicMaterial({ color: 0xff00ff });
+    const line = new THREE.Line(geometry, material);
+    scene.add(line);
+    debugLines.push(line);
+  }
+
+  const rayStart = new THREE.Vector3(player.position.x, 50, player.position.z);
+  const rayEnd = rayStart.clone().add(down.clone().multiplyScalar(50));
+  const rayGeom = new THREE.BufferGeometry().setFromPoints([rayStart, rayEnd]);
+  const rayLine = new THREE.Line(rayGeom, new THREE.LineBasicMaterial({ color: 0xffff00 }));
+  scene.add(rayLine);
+  debugLines.push(rayLine);
+}
+
+function getGroundHeight(x, z) {
+  raycaster.ray.origin.set(x, player.position.y + 1, z); // o +1.5 para margen
   raycaster.ray.direction.copy(down);
   const hits = raycaster.intersectObjects(terrain);
-  if(hits.length>0) return hits[0].point.y;
+  if (hits.length > 0) return hits[0].point.y;
   return 0;
 }
+
 
 player.position.set(worldSize/2,10,worldSize/2);
 player.position.y = getGroundHeight(player.position.x, player.position.z)+0.5;
@@ -573,6 +622,42 @@ openBtn.addEventListener('click', () => {
 
 closeBtn.addEventListener('click', () => {
   slidePanel.classList.remove('open');
+});
+
+
+const showDebugBtn = document.createElement('div');
+showDebugBtn.id = 'collision-toggle';
+showDebugBtn.textContent = 'Colisiones: OFF';
+showDebugBtn.style.position = 'absolute';
+showDebugBtn.style.top = '140px';
+showDebugBtn.style.left = '50%';
+showDebugBtn.style.transform = 'translateX(-50%)';
+showDebugBtn.style.width = '180px';
+showDebugBtn.style.height = '40px';
+showDebugBtn.style.backgroundColor = '#444'; // Se sobreescribe por .on
+showDebugBtn.style.color = 'white';
+showDebugBtn.style.fontSize = '14px';
+showDebugBtn.style.textAlign = 'center';
+showDebugBtn.style.lineHeight = '40px';
+showDebugBtn.style.zIndex = '20';
+showDebugBtn.style.cursor = 'pointer';
+
+let colisionesActivas = false;
+
+showDebugBtn.onclick = () => {
+  colisionesActivas = !colisionesActivas;
+  showDebugBtn.textContent = colisionesActivas ? "Colisiones: ON" : "Colisiones: OFF";
+  showDebugBtn.classList.toggle("on", colisionesActivas);
+};
+
+slidePanel.appendChild(showDebugBtn);
+
+
+let mostrarColisiones = false;
+showDebugBtn.addEventListener('click', () => {
+  mostrarColisiones = !mostrarColisiones;
+  showDebugBtn.textContent = mostrarColisiones ? 'Colisiones: ON' : 'Colisiones: OFF';
+  // aquí llamarías a la función que muestra/oculta las colisiones
 });
 
 // Palanca
@@ -704,18 +789,19 @@ renderer.domElement.addEventListener("touchend", e => {
   }
 });
 
-const jumpSpeed = 0.25;
+const jumpSpeed = 0.23;
 let velocityY = 0;
 let onGround = false;
 let jumpPressed = false;
 
 
 function jump(){
-  if(onGround){
+  if (onGround && hayEspacioParaSaltar()) {
     velocityY = jumpSpeed;
     onGround = false;
   }
 }
+
 jumpButton.addEventListener("touchstart", e=>{
   e.preventDefault();
   jumpPressed = true;
@@ -1019,7 +1105,7 @@ function limpiarCracksFlotantes() {
   player.position.y += velocityY;
 
   if (firstPerson) {
-    const eyeOffset = new THREE.Vector3(0, 0.4, 0); // altura de los ojos
+    const eyeOffset = new THREE.Vector3(0, 0., 0); // altura de los ojos
     const camOffset = eyeOffset.clone();
 if (breaking && currentTarget && terrain.includes(currentTarget)) {
   const delta = 0.016; // tiempo entre frames (aprox 60fps)
@@ -1065,7 +1151,8 @@ if (breaking && currentTarget && terrain.includes(currentTarget)) {
     player.rotation.y = camYaw;
   }
 
-  
+  dibujarDebugColisiones();
+
   renderer.render(scene, camera);
 }
 
