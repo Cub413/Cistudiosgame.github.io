@@ -173,18 +173,18 @@ color: #ccc;
   height: 2px;
 }
 
-  #pri-button {
+ #pri-button {
   position: absolute;
   top: 100px;
   right: 10px;
   width: 64px;
   height: 40px;
-  background-color: #800;
+  background-color: rgba(100, 100, 100, 0.5); /* gris translúcido */
+  border: 2px solid white; /* borde blanco */
   color: white;
   text-align: center;
   line-height: 40px;
   font-weight: bold;
-  
   z-index: 10;
   user-select: none;
   touch-action: none;
@@ -284,7 +284,7 @@ color: #ccc;
 
 <div id="joystick"><div id="joystick-thumb"></div></div>
 <div id="jump-button"></div>
-<div id="camera-toggle">3ra </div>
+<div id="camera-toggle">1ra </div>
 <div id="pri-button">pri</div>
 
 <div id="crosshair"></div>
@@ -519,13 +519,22 @@ function generateTerrain() {
 }
 setInterval(actualizarVisibilidadGlobal, 100);
 
-// Geometría y dimensiones del jugador
-const playerGeometry = new THREE.BoxGeometry(0.7, 0.9, 0.7);
-const playerMaterial = new THREE.MeshStandardMaterial({ color: 0x0000ff });
-const player = new THREE.Mesh(playerGeometry, playerMaterial);
+
+const faceTexture = loader.load('Texturas/cub.png');
+
+const materials = [
+  new THREE.MeshStandardMaterial({ color: 0x0000ff }), // cara derecha
+  new THREE.MeshStandardMaterial({ color: 0x0000ff }), // cara izquierda
+  new THREE.MeshStandardMaterial({ color: 0x0000ff }), // cara arriba
+  new THREE.MeshStandardMaterial({ color: 0x0000ff }), // cara abajo
+  new THREE.MeshStandardMaterial({ map: faceTexture }), // cara frontal (z positiva)
+  new THREE.MeshStandardMaterial({ color: 0x0000ff })  // cara trasera
+];
+
+const playerGeometry = new THREE.BoxGeometry(0.8, 0.9, 0.8);
+const player = new THREE.Mesh(playerGeometry, materials);
 player.castShadow = true;
 player.receiveShadow = true;
-scene.add(player);
 scene.add(player);
 
 
@@ -591,7 +600,7 @@ function getGroundHeight(x, z) {
 
 
 player.position.set(worldSize/2,10,worldSize/2);
-player.position.y = getGroundHeight(player.position.x, player.position.z)+0.5;
+player.position.y = getGroundHeight(player.position.x, player.position.z)+0.45;
 const pauseBtn = document.getElementById("pause-button");
 const pauseMenu = document.getElementById("pause-menu");
 const resumeBtn = document.getElementById("resume-btn");
@@ -812,13 +821,14 @@ jumpButton.addEventListener("touchend", e=>{
   jumpPressed = false;
 });
 
-// Cámara toggle 1ra/3ra persona
+let camMode = 0; // 0 = 1ra, 1 = 3ra, 2 = 2da
+
 const camToggleBtn = document.getElementById("camera-toggle");
-let firstPerson = false;
 camToggleBtn.addEventListener("click", () => {
-  firstPerson = !firstPerson;
-  camToggleBtn.textContent = firstPerson ? "1ra" : "3ra";
-  player.visible = !firstPerson;
+  camMode = (camMode + 1) % 3;
+  const labels = ["1ra", "2da", "3ra"];
+  camToggleBtn.textContent = ` ${labels[camMode]}`;
+  player.visible = camMode !== 0;
 });
 
 // Función animación y lógica
@@ -984,7 +994,7 @@ const playerHeight = 0.9;
         const testZ = pos.z + offset.y;
         const groundY = getGroundHeight(testX, testZ);
 
-        if (pos.y < groundY + 0.5) {
+        if (pos.y < groundY + 0.45) {
           collision = true;
         }
       }
@@ -1010,7 +1020,7 @@ const playerHeight = 0.9;
         const testZ = pos.z + offset.y;
         const groundY = getGroundHeight(testX, testZ);
 
-        if (pos.y < groundY + 0.5) {
+        if (pos.y < groundY + 0.45) {
           collision = true;
         }
       }
@@ -1086,9 +1096,9 @@ function limpiarCracksFlotantes() {
     if (h > ground) ground = h;
   }
 
-  const jumpMax = ground + 0.5 + salto;
+  const jumpMax = ground + 0.45 + salto;
 
-  if ((player.position.y < jumpMax && velocityY > 0) || player.position.y > ground + 0.5) {
+  if ((player.position.y < jumpMax && velocityY > 0) || player.position.y > ground + 0.45) {
     velocityY -= gravedad;
     onGround = false;
   } else {
@@ -1097,16 +1107,14 @@ function limpiarCracksFlotantes() {
       player.position.y = jumpMax;
     } else {
       velocityY = 0;
-      player.position.y = ground + 0.5;
+      player.position.y = ground + 0.45;
       onGround = true;
     }
   }
 
   player.position.y += velocityY;
 
-  if (firstPerson) {
-    const eyeOffset = new THREE.Vector3(0, 0., 0); // altura de los ojos
-    const camOffset = eyeOffset.clone();
+  
 if (breaking && currentTarget && terrain.includes(currentTarget)) {
   const delta = 0.016; // tiempo entre frames (aprox 60fps)
   const data = currentTarget.userData;
@@ -1127,29 +1135,76 @@ if (breaking && currentTarget && terrain.includes(currentTarget)) {
   updateBreakBar(0); // Ocultar barra si no está rompiendo
 }
 
-    // Aplicar rotación de la cámara manualmente
-    const quat = new THREE.Quaternion()
-      .setFromEuler(new THREE.Euler(camPitch, camYaw, 0, 'YXZ'));
-    camOffset.applyQuaternion(quat);
+if (camMode === 0) {
+  // 1ra persona (como tu versión)
+  const eyeOffset = new THREE.Vector3(0, 0., 0);
+  const camOffset = eyeOffset.clone();
 
-    camera.position.copy(player.position).add(camOffset);
-    camera.rotation.set(camPitch, camYaw, 0, 'YXZ');
+  if (breaking && currentTarget && terrain.includes(currentTarget)) {
+    const delta = 0.016; // aprox 60fps
+    const data = currentTarget.userData;
+    data.currentBreak += delta;
+
+    const progress = data.currentBreak / data.resistance;
+    updateBreakBar(progress);
+
+    if (data.currentBreak >= data.resistance) {
+      scene.remove(currentTarget);
+      const idx = terrain.indexOf(currentTarget);
+      if (idx !== -1) terrain.splice(idx, 1);
+      currentTarget = null;
+      breaking = false;
+      updateBreakBar(0);
+    }
   } else {
-    // Cámara detrás del jugador
-    const offset = new THREE.Vector3(0, 1.5, camDistance);
-    offset.applyAxisAngle(new THREE.Vector3(1, 0, 0), camPitch);
-    offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), camYaw);
-
-    const camPos = player.position.clone().add(offset);
-    camera.position.lerp(camPos, 0.2);
-
-    const target = player.position.clone();
-    target.y += 1;
-    camera.lookAt(target);
-
-    // Girar jugador con la cámara
-    player.rotation.y = camYaw;
+    updateBreakBar(0);
   }
+
+  const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(camPitch, camYaw, 0, 'YXZ'));
+  camOffset.applyQuaternion(quat);
+
+  camera.position.copy(player.position).add(camOffset);
+  camera.rotation.set(camPitch, camYaw, 0, 'YXZ');
+} 
+else {
+  // 3ra y 2da persona
+  const target = player.position.clone();
+  target.y += 1;
+
+  let offset;
+  if (camMode === 1) {
+    // 3ra persona (detrás)
+    offset = new THREE.Vector3(0, 2, -3);
+
+  } else {
+    // 2da persona (diagonal frontal)
+    // Más lejos y un poco más alto
+offset = new THREE.Vector3(0, 2, -3);
+
+
+  }
+
+  offset.applyAxisAngle(new THREE.Vector3(1, 0, 0), camPitch);
+  offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), camYaw);
+
+  const idealCamPos = player.position.clone().add(offset);
+
+  const rayDir = idealCamPos.clone().sub(target).normalize();
+  const raycaster = new THREE.Raycaster(target, rayDir, 0, offset.length());
+
+  const intersects = raycaster.intersectObjects(terrain, false);
+
+  if (intersects.length > 0) {
+    camera.position.lerp(intersects[0].point, 0.2);
+  } else {
+    camera.position.lerp(idealCamPos, 0.2);
+  }
+
+  camera.lookAt(target);
+
+  player.rotation.y = camMode === 2 ? camYaw + Math.PI : camYaw;
+}
+
 
   dibujarDebugColisiones();
 
