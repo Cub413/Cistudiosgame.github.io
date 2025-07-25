@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Bloxd.io + Cámara 1ra/3ra persona + Mira + Salto corregido</title>
+<title>cubox</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
@@ -92,7 +92,7 @@
   color: white;
   font-size: 18px;
   text-align: center;
-  border-radius: 8px;
+  
   cursor: pointer;
 }
 #collision-toggle.on {
@@ -172,6 +172,10 @@ color: #ccc;
   width: 20px;
   height: 2px;
 }
+.pause-option.on {
+  background-color: #4caf50;
+  color: white;
+}
 
  #pri-button {
   position: absolute;
@@ -243,12 +247,65 @@ color: #ccc;
 #play-button:active {
   transform: scale(0.95);
 }
+#pantalla-carga {
+  position: fixed;
+  inset: 0;
+  background: black;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+}
+
+.bloque-contenedor {
+  display: flex;
+  gap: 20px;
+  animation: rotar 2s infinite ease-in-out;
+}
+
+.bloque {
+  width: 64px;
+  height: 64px;
+  background-size: cover;
+  border: 2px solid white;
+}
+
+.bloque.tierra  { background-image: url('Texturas/interiordetronco.png'); }
+.bloque.cesped  { background-image: url('Texturas/cesped_parte_costado.jpg'); }
+.bloque.piedra  { background-image: url('Texturas/piedra.jpg'); }
+
+#texto-carga {
+  margin-top: 40px;
+  color: white;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 12px;
+}
+
+@keyframes rotar {
+  0% { transform: rotate(0deg); }
+  50% { transform: rotate(3deg); }
+  100% { transform: rotate(-3deg); }
+}
 
 /* Fuente pixel */
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 </style>
 </head>
 <body>
+  <div id="pantalla-carga">
+  <div class="bloque-contenedor">
+    <div class="bloque tierra"></div>
+    <div class="bloque cesped"></div>
+    <div class="bloque piedra"></div>
+  </div>
+  <div id="texto-carga">cargando</div>
+  <div id="tip-carga" style="margin-top: 20px; color: #ccc; font-size: 10px; font-family: 'Press Start 2P', monospace; text-align: center; max-width: 90%; line-height: 1.5; cursor: pointer;">
+   Usa el joystick para moverte.
+</div>
+
+</div>
+
   <div id="start-panel">
   <button id="play-button">JUGAR</button>
 </div>
@@ -267,6 +324,12 @@ color: #ccc;
 <div id="slide-panel">
   <div id="close-panel-btn">×</div>
   <!-- Contenido del panel -->
+<div style="margin-top: 200px;">
+  <label for="render-distance-slider" style="display: block; font-size: 14px;">Distancia de renderizado: <span id="render-distance-value">1</span></label>
+  <input type="range" id="render-distance-slider" min="1" max="10" value="1" step="1" style="width: 100%;">
+</div>
+<div id="spectator-toggle" class="pause-option" style="position: absolute;font-size: 10px; top: 300px; left: 50%; transform: translateX(-50%); width: 200px;">Espectador: OFF</div>
+
 
     <div id="shadow-toggle">Sombras: OFF</div>
 </div>
@@ -347,6 +410,17 @@ dirLight.shadow.camera.right = 20;
 dirLight.shadow.camera.top = 20;
 dirLight.shadow.camera.bottom = -20;
 scene.add(dirLight);
+const renderDistanceSlider = document.getElementById("render-distance-slider");
+const renderDistanceValue = document.getElementById("render-distance-value");
+
+renderDistanceSlider.addEventListener("input", () => {
+  RENDER_DISTANCE = parseInt(renderDistanceSlider.value);
+  renderDistanceValue.textContent = RENDER_DISTANCE;
+  updateChunksAroundPlayer(); // fuerza una actualización inmediata
+});
+let modoEspectador = false;
+let bajando = false;
+let dobleToqueTiempo = 0;
 
 const salto = 1; // altura de salto en bloques
 const gravedadBase = 0.02;
@@ -471,11 +545,13 @@ function createBlock(x, y, z, type) {
   };
 
   block.castShadow = true;
-  block.receiveShadow = true;
-  block.position.set(x * blockSize, y * blockSize, z * blockSize);
+block.receiveShadow = true;
+block.position.set(x * blockSize, y * blockSize, z * blockSize);
 
-  scene.add(block);
-  terrain.push(block);
+// scene.add(block); ← esto debe estar eliminado
+// terrain.push(block); ← esto lo hacemos en generateChunk
+return block; // ✅
+
 }
 function actualizarVisibilidadGlobal() {
   const dirs = [
@@ -502,21 +578,176 @@ function actualizarVisibilidadGlobal() {
     bloque.visible = !estaRodeado;
   }
 }
+const deletedBlocks = new Map(); // clave: \"chunkKey|x,y,z\" → true
+const tips = [
+  "el lag es parte del juego",
+  "ten paciencia ",
+  "usa [pri] para romper o golpear",
+  "con [sec] puedes poner bloques o usar algo",
+  "Cambia la distancia de renderizado en ajustes.",
+  "Explora, construye y destruye como quieras.",
+  "Puedes activar o desactivar sombras.",
+  "Toca dos veces salto para bajar en espectador.",
+  "Explora, construye y destruye como quieras.",
+  "Usa el joystick para moverte en cualquier dirección.",
+  "Presiona el botón para saltar obstáculos.",
+  "Mantén presionado para romper bloques.",
+  "Cambia entre 1ra, 2da y 3ra persona tocando el botón de cámara.",
+  "Activa el modo espectador para volar por el mundo.",
+  "Puedes atravesar paredes en modo espectador.",
+  "Toca dos veces salto para bajar mientras vuelas.",
+  "Modifica la distancia de renderizado desde el menú de pausa.",
+  "Activa o desactiva sombras para mejorar el rendimiento.",
+  "Los bloques de piedra son más resistentes.",
+  "Solo puedes romper bloques si estás cerca.",
+  "No todos los bloques necesitan romperse para explorar.",
+  "Aléjate para que los chunks lejanos se descarguen.",
+  "Cuidado: los bloques no flotan solos por mucho tiempo.",
+  "Personaliza los controles desde el panel de ajustes.",
+  "Descubre cuevas ocultas bajo tierra.",
+  "Construye escaleras o torres con bloques que tú pongas.",
+  "Experimenta con distintas vistas para explorar mejor.",
+  "Tienes el control total del mundo: ¡sé creativo!"
 
-function generateTerrain() {
-  terrain = [];
-  for(let x = 0; x < worldSize; x++) {
-    for(let z = 0; z < worldSize; z++) {
-      const n = simplex.noise2D(x / 10, z / 10);
-      const h = Math.floor((n + 1) * 5);
-      for(let y = 0; y < h; y++) {
-        if(y === h - 1) createBlock(x, y, z, "grass");
-        else if(y >= h - 3) createBlock(x, y, z, "dirt");
-        else createBlock(x, y, z, "stone");
+];
+
+const tipDiv = document.getElementById("tip-carga");
+let tipsMostrados = [];
+let tipIndex = 0;
+let tipTimer = null;
+
+function mostrarSiguienteTip() {
+  if (tipsMostrados.length === tips.length) {
+    tipsMostrados = []; // reset si ya se mostraron todos
+  }
+
+  let nuevoTip;
+  do {
+    tipIndex = Math.floor(Math.random() * tips.length);
+    nuevoTip = tips[tipIndex];
+  } while (tipsMostrados.includes(nuevoTip));
+
+  tipsMostrados.push(nuevoTip);
+  tipDiv.textContent = " " + nuevoTip;
+
+  reiniciarTemporizador();
+}
+
+function reiniciarTemporizador() {
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(mostrarSiguienteTip, 5000);
+}
+
+// Cambiar tip si se hace clic
+tipDiv.addEventListener("click", mostrarSiguienteTip);
+
+// Iniciar el primer tip
+mostrarSiguienteTip();
+
+const CHUNK_SIZE = 5;
+let RENDER_DISTANCE = 1; // ✅ para poder modificarla con el slider
+
+const loadedChunks = new Map();
+
+function generateChunk(cx, cz) {
+  const key = `${cx},${cz}`;
+  if (loadedChunks.has(key)) return;
+
+  const group = new THREE.Group();
+  group.name = `chunk_${cx}_${cz}`;
+
+  const blocks = {}; // estructura para guardar los bloques del chunk
+
+  for (let x = 0; x < CHUNK_SIZE; x++) {
+    for (let z = 0; z < CHUNK_SIZE; z++) {
+      const worldX = cx * CHUNK_SIZE + x;
+      const worldZ = cz * CHUNK_SIZE + z;
+
+      const n = simplex.noise2D(worldX / 10, worldZ / 10);
+      const height = Math.floor((n + 1) * 5);
+
+      for (let y = 0; y < height; y++) {
+        let type = "stone";
+        if (y === height - 1) type = "grass";
+        else if (y >= height - 3) type = "dirt";
+
+        const lx = x;
+        const lz = z;
+        const delKey = `${cx},${cz}|${lx},${y},${lz}`;
+        if (deletedBlocks.has(delKey)) continue; // no crear si fue destruido
+
+        const block = createBlock(worldX, y, worldZ, type);
+        group.add(block);
+        terrain.push(block); // necesario para raycasting y colisiones
+
+        // guardar bloque en estructura local
+        if (!blocks[lx]) blocks[lx] = {};
+        if (!blocks[lx][y]) blocks[lx][y] = {};
+        blocks[lx][y][lz] = {
+          mesh: block,
+          type: type,
+          exists: true
+        };
       }
     }
   }
+
+  scene.add(group);
+  loadedChunks.set(key, {
+    mesh: group,
+    blocks: blocks
+  });
 }
+
+setTimeout(() => {
+  const pantalla = document.getElementById("pantalla-carga");
+  if (pantalla) pantalla.style.display = "none";
+  console.log("⏳ Pantalla de carga oculta tras 30 segundos.");
+}, 30000); // ← Cambia este valor si quieres otro tiempo
+
+function updateChunksAroundPlayer() {
+  const px = Math.floor(player.position.x / CHUNK_SIZE);
+  const pz = Math.floor(player.position.z / CHUNK_SIZE);
+
+  const seen = new Set();
+  const chunksToGenerate = [];
+
+  for (let dx = -RENDER_DISTANCE; dx <= RENDER_DISTANCE; dx++) {
+    for (let dz = -RENDER_DISTANCE; dz <= RENDER_DISTANCE; dz++) {
+      const cx = px + dx;
+      const cz = pz + dz;
+      const key = `${cx},${cz}`;
+      seen.add(key);
+      if (!loadedChunks.has(key)) {
+        chunksToGenerate.push([cx, cz]); // Solo los no cargados
+      }
+    }
+  }
+const textoCarga = document.getElementById("texto-carga");
+let puntos = 0;
+setInterval(() => {
+  puntos = (puntos + 1) % 4;
+  textoCarga.textContent = "cargando" + ".".repeat(puntos);
+}, 1000);
+
+  // Cargar lentamente, uno cada 50ms
+  chunksToGenerate.forEach(([cx, cz], index) => {
+  setTimeout(() => {
+    generateChunk(cx, cz);
+  }, index * 500); // ⬅️ Aumentado de 50 a 200ms
+});
+
+
+  // Eliminar chunks fuera del rango
+  for (let key of loadedChunks.keys()) {
+    if (!seen.has(key)) {
+      const chunk = loadedChunks.get(key);
+      scene.remove(chunk.mesh);
+      loadedChunks.delete(key);
+    }
+  }
+}
+
 setInterval(actualizarVisibilidadGlobal, 100);
 
 
@@ -599,13 +830,21 @@ function getGroundHeight(x, z) {
 }
 
 
-player.position.set(worldSize/2,10,worldSize/2);
+player.position.set(8, 30, 8); // 30 para asegurarte de que cae al suelo generado
+
 player.position.y = getGroundHeight(player.position.x, player.position.z)+0.45;
 const pauseBtn = document.getElementById("pause-button");
 const pauseMenu = document.getElementById("pause-menu");
 const resumeBtn = document.getElementById("resume-btn");
 
 let sombrasActivas = false; // Estado inicial: desactivadas
+const spectatorToggle = document.getElementById("spectator-toggle");
+
+spectatorToggle.addEventListener("click", () => {
+  modoEspectador = !modoEspectador;
+  spectatorToggle.textContent = "Espectador: " + (modoEspectador ? "ON" : "OFF");
+  spectatorToggle.classList.toggle("on", modoEspectador);
+});
 
 const shadowToggle = document.getElementById("shadow-toggle");
 const updateSombras = () => {
@@ -811,15 +1050,25 @@ function jump(){
   }
 }
 
-jumpButton.addEventListener("touchstart", e=>{
+jumpButton.addEventListener("touchstart", e => {
   e.preventDefault();
-  jumpPressed = true;
-  jump();
+
+  const now = performance.now();
+  if (modoEspectador && now - dobleToqueTiempo < 400) {
+    bajando = true;
+  } else {
+    dobleToqueTiempo = now;
+    jumpPressed = true;
+    if (!modoEspectador) jump();
+  }
 });
-jumpButton.addEventListener("touchend", e=>{
+
+jumpButton.addEventListener("touchend", e => {
   e.preventDefault();
   jumpPressed = false;
+  bajando = false;
 });
+
 
 let camMode = 0; // 0 = 1ra, 1 = 3ra, 2 = 2da
 
@@ -1028,12 +1277,19 @@ const playerHeight = 0.9;
     }
 
     // Aplicar movimiento permitido para lograr deslizamiento
-    if (canMoveX) player.position.x += moveStep.x;
-    if (canMoveZ) player.position.z += moveStep.z;
-
-    // --- El código siguiente que habías puesto para stepUp y demás queda comentado
-    // porque usás enableStepUp = false, si lo necesitás activo avisame ---
+    if (modoEspectador) {
+  player.position.add(moveStep); // 👻 atraviesa todo
+} else {
+  const newPos = player.position.clone().add(moveStep);
+  const collisions = terrain.some(obj => {
+    const dist = obj.position.distanceTo(newPos);
+    return dist < 0.5; // tamaño del cuerpo del jugador
+  });
+  if (!collisions) {
+    player.position.copy(newPos);
   }
+}}
+
 
   if (breaking && currentTarget && terrain.includes(currentTarget)) {
   const distance = camera.position.distanceTo(currentTarget.position);
@@ -1053,19 +1309,42 @@ const playerHeight = 0.9;
     updateCrackLayer(currentTarget, progress); // 👈 aplicar textura encima
 
     if (progress >= 1) {
-  removeCrackOverlay(currentTarget); // ✅ eliminar overlay antes
-  scene.remove(currentTarget);
+  if (currentTarget.parent) {
+    currentTarget.parent.remove(currentTarget);
+  }
+  const worldPos = currentTarget.position;
+const cx = Math.floor(worldPos.x / CHUNK_SIZE);
+const cz = Math.floor(worldPos.z / CHUNK_SIZE);
+const lx = Math.floor(worldPos.x) % CHUNK_SIZE;
+const lz = Math.floor(worldPos.z) % CHUNK_SIZE;
+const ly = Math.floor(worldPos.y);
+const delKey = `${cx},${cz}|${lx},${ly},${lz}`;
+deletedBlocks.set(delKey, true);
+
+  // Eliminar de los datos del chunk
+const parentChunk = Array.from(loadedChunks.values()).find(c => c.mesh === currentTarget.parent);
+if (parentChunk) {
+  for (let lx in parentChunk.blocks) {
+    for (let y in parentChunk.blocks[lx]) {
+      for (let lz in parentChunk.blocks[lx][y]) {
+        const b = parentChunk.blocks[lx][y][lz];
+        if (b.mesh === currentTarget) {
+          parentChunk.blocks[lx][y][lz].exists = false;
+          parentChunk.blocks[lx][y][lz].mesh = null;
+        }
+      }
+    }
+  }
+}
+
   const idx = terrain.indexOf(currentTarget);
   if (idx !== -1) terrain.splice(idx, 1);
+  removeCrackOverlay(currentTarget);
   currentTarget = null;
   breaking = false;
   updateBreakBar(0);
 }
-}
-} else {
-  updateBreakBar(0);
-}
-
+}}
 function limpiarCracksFlotantes() {
   for (const bloque of terrain) {
     const overlay = bloque.userData.crackOverlay;
@@ -1080,6 +1359,8 @@ function limpiarCracksFlotantes() {
 }
 
   // Gravedad y salto
+  if (!modoEspectador) {
+  // Modo normal (con gravedad)
   const groundCheckOffsets = [
     new THREE.Vector2(0, 0),
     new THREE.Vector2(0.3, 0),
@@ -1113,8 +1394,16 @@ function limpiarCracksFlotantes() {
   }
 
   player.position.y += velocityY;
+} else {
+  // 👻 Modo espectador: subir/bajar libremente
+  if (jumpPressed) {
+    player.position.y += 0.15;
+  }
+  if (bajando) {
+    player.position.y -= 0.15;
+  }
+}
 
-  
 if (breaking && currentTarget && terrain.includes(currentTarget)) {
   const delta = 0.016; // tiempo entre frames (aprox 60fps)
   const data = currentTarget.userData;
@@ -1124,12 +1413,42 @@ if (breaking && currentTarget && terrain.includes(currentTarget)) {
   updateBreakBar(progress); // Actualizar barra de rompimiento
 
   if (data.currentBreak >= data.resistance) {
-    scene.remove(currentTarget);
-    const idx = terrain.indexOf(currentTarget);
-    if (idx !== -1) terrain.splice(idx, 1);
-    currentTarget = null;
-    breaking = false;
-    updateBreakBar(0); // Ocultar barra al romper bloque
+  if (currentTarget.parent) {
+    currentTarget.parent.remove(currentTarget);
+  }
+  const worldPos = currentTarget.position;
+const cx = Math.floor(worldPos.x / CHUNK_SIZE);
+const cz = Math.floor(worldPos.z / CHUNK_SIZE);
+const lx = Math.floor(worldPos.x) % CHUNK_SIZE;
+const lz = Math.floor(worldPos.z) % CHUNK_SIZE;
+const ly = Math.floor(worldPos.y);
+const delKey = `${cx},${cz}|${lx},${ly},${lz}`;
+deletedBlocks.set(delKey, true);
+
+  // Eliminar de los datos del chunk
+const parentChunk = Array.from(loadedChunks.values()).find(c => c.mesh === currentTarget.parent);
+if (parentChunk) {
+  for (let lx in parentChunk.blocks) {
+    for (let y in parentChunk.blocks[lx]) {
+      for (let lz in parentChunk.blocks[lx][y]) {
+        const b = parentChunk.blocks[lx][y][lz];
+        if (b.mesh === currentTarget) {
+          parentChunk.blocks[lx][y][lz].exists = false;
+          parentChunk.blocks[lx][y][lz].mesh = null;
+        }
+      }
+    }
+  }
+}
+
+  const idx = terrain.indexOf(currentTarget);
+  if (idx !== -1) terrain.splice(idx, 1);
+  removeCrackOverlay(currentTarget);
+  currentTarget = null;
+  breaking = false;
+  updateBreakBar(0);
+
+
   }
 } else {
   updateBreakBar(0); // Ocultar barra si no está rompiendo
@@ -1149,13 +1468,42 @@ if (camMode === 0) {
     updateBreakBar(progress);
 
     if (data.currentBreak >= data.resistance) {
-      scene.remove(currentTarget);
-      const idx = terrain.indexOf(currentTarget);
-      if (idx !== -1) terrain.splice(idx, 1);
-      currentTarget = null;
-      breaking = false;
-      updateBreakBar(0);
+  if (currentTarget.parent) {
+    currentTarget.parent.remove(currentTarget);
+  }
+  const worldPos = currentTarget.position;
+const cx = Math.floor(worldPos.x / CHUNK_SIZE);
+const cz = Math.floor(worldPos.z / CHUNK_SIZE);
+const lx = Math.floor(worldPos.x) % CHUNK_SIZE;
+const lz = Math.floor(worldPos.z) % CHUNK_SIZE;
+const ly = Math.floor(worldPos.y);
+const delKey = `${cx},${cz}|${lx},${ly},${lz}`;
+deletedBlocks.set(delKey, true);
+
+  // Eliminar de los datos del chunk
+const parentChunk = Array.from(loadedChunks.values()).find(c => c.mesh === currentTarget.parent);
+if (parentChunk) {
+  for (let lx in parentChunk.blocks) {
+    for (let y in parentChunk.blocks[lx]) {
+      for (let lz in parentChunk.blocks[lx][y]) {
+        const b = parentChunk.blocks[lx][y][lz];
+        if (b.mesh === currentTarget) {
+          parentChunk.blocks[lx][y][lz].exists = false;
+          parentChunk.blocks[lx][y][lz].mesh = null;
+        }
+      }
     }
+  }
+}
+
+  const idx = terrain.indexOf(currentTarget);
+  if (idx !== -1) terrain.splice(idx, 1);
+  removeCrackOverlay(currentTarget);
+  currentTarget = null;
+  breaking = false;
+  updateBreakBar(0);
+}
+
   } else {
     updateBreakBar(0);
   }
@@ -1211,8 +1559,10 @@ offset = new THREE.Vector3(0, 2, -3);
   renderer.render(scene, camera);
 }
 
-generateTerrain();
+updateChunksAroundPlayer();
+setInterval(updateChunksAroundPlayer, 1000); // actualiza cada segundo
 animate();
+
 
 
 </script>
