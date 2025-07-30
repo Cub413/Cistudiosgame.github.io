@@ -4,16 +4,32 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>cubox</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="libs/press-start.tff">
+
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
-<style>
-  body { margin: 0; overflow: hidden;
-  font-family: 'Press Start 2P', cursive;touch-action: none; background:#87CEEB; }
-  
+  <!-- three.js local -->
+  <script src="libs/three.min.js"></script>
 
+  <!-- simplex-noise local -->
+  <script src="libs/simplex-noise.min.js"></script>
+
+
+<style>
+    @font-face {
+      font-family: 'Press Start 2P';
+      src: url('libs/press-start-2p.ttf') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    body {
+  margin: 0;
+  overflow: hidden;
+  font-family: 'Press Start 2P', cursive, sans-serif;
+  touch-action: none;
+  background: #87CEEB;
+}
  #joystick {
   position: absolute; bottom: 30px; left: 30px;
   width: 100px; height: 100px;
@@ -118,16 +134,21 @@
 
 #camera-toggle {
 position: absolute;
-top: 10px;
-right: 10px;
-width: 50px;
-height: 40px;
-background-color: #222;
-color: #e0e0e0;
-font-size: 9px;
-font-weight: 600;
-text-align: center;
-line-height: 40px;
+  top: 0px;
+  right: 0px;
+  font-size: 10px;
+  width: 54px;
+  height: 35px;
+  background-color: rgba(100, 100, 100, 0.5); /* gris translúcido */
+  border: 2px solid white; /* borde blanco */
+  color: white;
+  text-align: center;
+  line-height: 40px;
+  font-weight: bold;
+  z-index: 10;
+  user-select: none;
+  touch-action: none;
+}
 
 box-shadow: 0 2px 5px rgba(0,0,0,0.4);
 user-select: none;
@@ -301,7 +322,7 @@ color: #ccc;
   </div>
   <div id="texto-carga">cargando</div>
   <div id="tip-carga" style="margin-top: 20px; color: #ccc; font-size: 10px; font-family: 'Press Start 2P', monospace; text-align: center; max-width: 90%; line-height: 1.5; cursor: pointer;">
-   Usa el joystick para moverte.
+   si esto no cambias,significa que no carga.
 </div>
 
 </div>
@@ -329,6 +350,12 @@ color: #ccc;
   <input type="range" id="render-distance-slider" min="1" max="10" value="1" step="1" style="width: 100%;">
 </div>
 <div id="spectator-toggle" class="pause-option" style="position: absolute;font-size: 10px; top: 300px; left: 50%; transform: translateX(-50%); width: 200px;">Espectador: OFF</div>
+<div style="margin-top: 90px;">
+  <label for="render-down-slider" style="display: block; font-size: 14px;">
+    Altura visible hacia abajo: <span id="render-down-value">5</span>
+  </label>
+  <input type="range" id="render-down-slider" min="1" max="64" value="5" step="1" style="width: 100%;">
+</div>
 
 
     <div id="shadow-toggle">Sombras: OFF</div>
@@ -396,7 +423,7 @@ loader.load('Texturas/dia.jpg', function(texture) {
 });
 
 // Luz
-scene.background = new THREE.Color(0xffffff);
+scene.background = new THREE.Color(0xff6600);
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
 dirLight.position.set(10,20,10);
@@ -418,6 +445,8 @@ renderDistanceSlider.addEventListener("input", () => {
   renderDistanceValue.textContent = RENDER_DISTANCE;
   updateChunksAroundPlayer(); // fuerza una actualización inmediata
 });
+let crackOverlayInstanceMesh = null;
+
 let modoEspectador = false;
 let bajando = false;
 let dobleToqueTiempo = 0;
@@ -438,8 +467,44 @@ const worldSize = 10;
 let terrain = [];
 let joystickTouchId = null;
 let cameraTouchId = null;
+const blockTypes = ["grass", "dirt", "stone"];
+const MAX_INSTANCES_PER_TYPE = 500; // ajustable por chunk
+const GEOMETRY_CUBO = new THREE.BoxGeometry(1, 1, 1);
+let crackBreaking = false;
+let crackStartTime = 0;
+let crackInstanceId = null;
+let crackInstancedMesh = null;
+
+const crackBreakProgress = {};
+const crackResistances = new Map(); // key = "cx,cz|lx,ly,lz", value = resistencia
+
+const crackOverlayObj = new THREE.Mesh(
+  new THREE.BoxGeometry(1.01, 1.01, 1.01),
+  new THREE.MeshBasicMaterial({
+    map: null, // se actualizará
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+  })
+);
+crackOverlayObj.renderOrder = 999;
+crackOverlayObj.visible = false;
+scene.add(crackOverlayObj);
 
 const textureLoader = new THREE.TextureLoader();
+const atlasTexture = textureLoader.load("Texturas/atlas.png");
+atlasTexture.magFilter = THREE.NearestFilter;
+atlasTexture.minFilter = THREE.NearestFilter;
+
+const atlasMaterial = new THREE.MeshStandardMaterial({ map: atlasTexture });
+const geometries = {
+  grass: createBlockGeometryFromAtlas([2, 2, 0, 3, 2, 2]), // lados, arriba, abajo
+  dirt:  createBlockGeometryFromAtlas([3, 3, 3, 3, 3, 3]),
+  stone: createBlockGeometryFromAtlas([1, 1, 1, 1, 1, 1]),
+  bedrock: createBlockGeometryFromAtlas([4, 4, 4, 4, 4, 4]) // nueva geometría para bedrock
+};
+
+
 const texturesCrack = [
   textureLoader.load('Texturas/crack1.png'),
   textureLoader.load('Texturas/crack2.png'),
@@ -447,14 +512,37 @@ const texturesCrack = [
   textureLoader.load('Texturas/crack4.png'),
   textureLoader.load('Texturas/crack5.png'),
 ];
+function initCrackOverlayInstance(crackTextures) {
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const material = new THREE.MeshBasicMaterial({
+    map: crackTextures[0],
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+    alphaTest: 0.1,
+  });
 
-const textures = {
-  grass_top: textureLoader.load("Texturas/cesped.jpg"),
-  grass_side: textureLoader.load("Texturas/cesped_parte_costado.jpg"),
-  dirt: textureLoader.load("Texturas/tierra.jpg"),
-  stone: textureLoader.load("Texturas/piedra.jpg"),
-  crack: textureLoader.load("Texturas/crack.png") // ← se añadió aquí
-};
+  crackOverlayInstanceMesh = new THREE.Mesh(geometry, material);
+  crackOverlayInstanceMesh.renderOrder = 999;
+  crackOverlayInstanceMesh.visible = false;
+  scene.add(crackOverlayInstanceMesh);
+}
+initCrackOverlayInstance(texturesCrack);
+
+const crackOverlayMaterial = new THREE.MeshBasicMaterial({
+  map: texturesCrack[0],
+  transparent: true,
+  depthTest: true,
+  depthWrite: false,
+});
+const crackOverlayMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(1.01, 1.01, 1.01), // levemente más grande
+  crackOverlayMaterial
+);
+crackOverlayMesh.renderOrder = 999;
+crackOverlayMesh.visible = false;
+scene.add(crackOverlayMesh);
+
 const panel = document.getElementById("start-panel");
 const button = document.getElementById("play-button");
 
@@ -509,33 +597,56 @@ screen.orientation?.addEventListener("change", checkState);
 // También se comprueba al rotar el dispositivo
 window.addEventListener("resize", checkState);
 const jumpButton = document.getElementById("jump-button");
+function createBlockGeometryFromAtlas(faceIndices) {
+  const tileCount = 3; // 3x3 bloques
+  const tileSize = 1 / tileCount;
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const uvs = geometry.attributes.uv;
 
-function createBlock(x, y, z, type) {
-  const textureMaps = (() => {
-    if(type === "grass") {
-      return [
-        textures.grass_side,
-        textures.grass_side,
-        textures.grass_top,
-        textures.dirt,
-        textures.grass_side,
-        textures.grass_side
-      ];
-    } else if(type === "dirt") {
-      return new Array(6).fill(textures.dirt);
-    } else if(type === "stone") {
-      return new Array(6).fill(textures.stone);
-    }
-  })();
+  for (let i = 0; i < 6; i++) {
+    const index = faceIndices[i];
+    const tx = index % tileCount;
+    const ty = Math.floor(index / tileCount);
+    const uMin = tx * tileSize;
+    const vMin = 1 - (ty + 1) * tileSize;
+    const uMax = uMin + tileSize;
+    const vMax = vMin + tileSize;
 
-  const geometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
-  const materials = [];
+    const uvIndex = i * 8;
 
-  for(let i = 0; i < 6; i++) {
-    materials.push(new THREE.MeshStandardMaterial({ map: textureMaps[i] }));
+    // Cada cara tiene 4 vértices (2 triángulos)
+    uvs.array[uvIndex + 0] = uMin; uvs.array[uvIndex + 1] = vMax;
+    uvs.array[uvIndex + 2] = uMax; uvs.array[uvIndex + 3] = vMax;
+    uvs.array[uvIndex + 4] = uMin; uvs.array[uvIndex + 5] = vMin;
+    uvs.array[uvIndex + 6] = uMax; uvs.array[uvIndex + 7] = vMin;
   }
 
-  const block = new THREE.Mesh(geometry, materials);
+  uvs.needsUpdate = true;
+  return geometry;
+}
+
+function createBlock(x, y, z, type) {
+  let faceIndices;
+
+  // Asignar índice del atlas a cada cara
+  if (type === "grass") {
+    faceIndices = [2, 2, 0, 3, 2, 2]; // lados, arriba, abajo, frente, atrás
+  } else if (type === "dirt") {
+    faceIndices = new Array(6).fill(3); // todas iguales
+  } else if (type === "stone") {
+    faceIndices = new Array(6).fill(1);
+  } else {
+    faceIndices = new Array(6).fill(4); // fallback
+  }
+
+  const geometry = createBlockGeometryFromAtlas(faceIndices);
+  const block = new THREE.Mesh(geometry, atlasMaterial);
+
+  block.position.set(x, y, z);
+  block.castShadow = true;
+  block.receiveShadow = true;
+block.userData.resistance = resistencia; // por ejemplo: Math.random() * 1.5 + 0.5;
+block.userData.currentBreak = 0;
 
   block.userData = {
     type: type,
@@ -544,40 +655,72 @@ function createBlock(x, y, z, type) {
     crackMaterial: null
   };
 
-  block.castShadow = true;
-block.receiveShadow = true;
-block.position.set(x * blockSize, y * blockSize, z * blockSize);
-
-// scene.add(block); ← esto debe estar eliminado
-// terrain.push(block); ← esto lo hacemos en generateChunk
-return block; // ✅
-
+  return block;
 }
-function actualizarVisibilidadGlobal() {
+
+function generarOrdenEspiral(radio) {
+  const orden = [];
+  let x = 0, z = 0, dx = 0, dz = -1;
+  for (let i = 0; i < Math.pow((radio * 2 + 1), 2); i++) {
+    if (Math.abs(x) <= radio && Math.abs(z) <= radio) {
+      orden.push([x, z]);
+    }
+    if (x === z || (x < 0 && x === -z) || (x > 0 && x === 1 - z)) {
+      [dx, dz] = [-dz, dx]; // rotar
+    }
+    x += dx;
+    z += dz;
+  }
+  return orden;
+}
+function mostrarVecinosSiAhoraEstanExpuestos(cx, cz, lx, ly, lz) {
   const dirs = [
-    new THREE.Vector3(1, 0, 0),
-    new THREE.Vector3(-1, 0, 0),
-    new THREE.Vector3(0, 1, 0),
-    new THREE.Vector3(0, -1, 0),
-    new THREE.Vector3(0, 0, 1),
-    new THREE.Vector3(0, 0, -1),
+    [1, 0, 0], [-1, 0, 0],
+    [0, 1, 0], [0, -1, 0],
+    [0, 0, 1], [0, 0, -1],
   ];
 
-  for (const bloque of terrain) {
-    const pos = bloque.position.clone().divideScalar(blockSize);
+  for (const [dx, dy, dz] of dirs) {
+    const nx = lx + dx;
+    const ny = ly + dy;
+    const nz = lz + dz;
 
-    const estaRodeado = dirs.every(dir => {
-      const neighborPos = pos.clone().add(dir);
-      return terrain.some(b =>
-        b.position.x === neighborPos.x * blockSize &&
-        b.position.y === neighborPos.y * blockSize &&
-        b.position.z === neighborPos.z * blockSize
-      );
-    });
+    const key = `${cx},${cz}`;
+    const chunk = loadedChunks.get(key);
+    if (!chunk?.blocks?.[nx]?.[ny]?.[nz]) continue;
 
-    bloque.visible = !estaRodeado;
+    const blockData = chunk.blocks[nx][ny][nz];
+    if (!blockData.exists) continue;
+
+    // Verificar si sigue oculto por vecinos
+    let oculto = true;
+
+    for (const [ddx, ddy, ddz] of dirs) {
+      const xx = nx + ddx;
+      const yy = ny + ddy;
+      const zz = nz + ddz;
+      const vecino = chunk.blocks?.[xx]?.[yy]?.[zz];
+      if (!vecino || !vecino.exists) {
+        oculto = false;
+        break;
+      }
+    }
+
+    if (!oculto) {
+      // Reposicionar el bloque (ya tenía una instancia en 9999)
+      const mesh = chunk.mesh.children.find(m => m instanceof THREE.InstancedMesh && m.geometry === geometries[blockData.type]);
+      if (mesh && blockData.instanceIndex !== undefined) {
+        const dummy = new THREE.Object3D();
+        dummy.position.set((cx * CHUNK_SIZE + nx), ny, (cz * CHUNK_SIZE + nz));
+        dummy.updateMatrix();
+        mesh.setMatrixAt(blockData.instanceIndex, dummy.matrix);
+        mesh.instanceMatrix.needsUpdate = true;
+      }
+    }
   }
 }
+
+
 const deletedBlocks = new Map(); // clave: \"chunkKey|x,y,z\" → true
 const tips = [
   "el lag es parte del juego",
@@ -644,10 +787,94 @@ tipDiv.addEventListener("click", mostrarSiguienteTip);
 // Iniciar el primer tip
 mostrarSiguienteTip();
 
+
 const CHUNK_SIZE = 5;
+let RENDER_HACIA_ABAJO = 5;
+
 let RENDER_DISTANCE = 1; // ✅ para poder modificarla con el slider
 
+
+let chunksCargados = 0;
+let totalChunksIniciales = 0;
+let pantallaYaOcultada = false;
+const renderDownSlider = document.getElementById("render-down-slider");
+const renderDownValue = document.getElementById("render-down-value");
+
+renderDownSlider.addEventListener("input", () => {
+  RENDER_HACIA_ABAJO = parseInt(renderDownSlider.value);
+  renderDownValue.textContent = RENDER_HACIA_ABAJO;
+  updateChunksAroundPlayer(); // fuerza regeneración
+});
+
 const loadedChunks = new Map();
+function createBlockGeometryFromAtlas(faceIndices) {
+  const tileCount = 3; // 3x3 en el atlas
+  const tileSize = 1 / tileCount;
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const uvs = geometry.attributes.uv;
+
+  for (let i = 0; i < 6; i++) {
+    const index = faceIndices[i];
+    const tx = index % tileCount;
+    const ty = Math.floor(index / tileCount);
+    const uMin = tx * tileSize;
+    const vMin = 1 - (ty + 1) * tileSize;
+    const uMax = uMin + tileSize;
+    const vMax = vMin + tileSize;
+
+    const uvIndex = i * 8;
+
+    uvs.array[uvIndex + 0] = uMin; uvs.array[uvIndex + 1] = vMax;
+    uvs.array[uvIndex + 2] = uMax; uvs.array[uvIndex + 3] = vMax;
+    uvs.array[uvIndex + 4] = uMin; uvs.array[uvIndex + 5] = vMin;
+    uvs.array[uvIndex + 6] = uMax; uvs.array[uvIndex + 7] = vMin;
+  }
+
+  uvs.needsUpdate = true;
+  return geometry;
+}
+function posicionarJugadorInicial(intentos = 0) {
+  const px = 0;
+  const pz = 0;
+  const cx = Math.floor(px / CHUNK_SIZE);
+  const cz = Math.floor(pz / CHUNK_SIZE);
+  const key = `${cx},${cz}`;
+
+  const chunk = loadedChunks.get(key);
+
+  if (!chunk) {
+    if (intentos < 50) {
+      setTimeout(() => posicionarJugadorInicial(intentos + 1), 100);
+    } else {
+      console.warn("❌ No se pudo encontrar chunk para posicionar al jugador.");
+    }
+    return;
+  }
+
+  let altura = -1;
+  const bx = px % CHUNK_SIZE;
+  const bz = pz % CHUNK_SIZE;
+
+  for (let y = 20; y >= 0; y--) {
+    if (chunk.blocks?.[bx]?.[y]?.[bz]?.exists) {
+      altura = y;
+      break;
+    }
+  }
+
+  if (altura === -1) {
+    if (intentos < 50) {
+      setTimeout(() => posicionarJugadorInicial(intentos + 1), 100);
+    } else {
+      console.warn("❌ No se encontró altura válida para colocar al jugador.");
+    }
+    return;
+  }
+
+  // ✅ Posicionar al jugador justo encima
+  player.position.set(px + 0.5, altura + 1.5, pz + 0.5);
+  velocityY = 0;
+}
 
 function generateChunk(cx, cz) {
   const key = `${cx},${cz}`;
@@ -656,54 +883,139 @@ function generateChunk(cx, cz) {
   const group = new THREE.Group();
   group.name = `chunk_${cx}_${cz}`;
 
-  const blocks = {}; // estructura para guardar los bloques del chunk
+  const blocks = {};
+  const meshMap = {};
+  const counters = {};
+  const MAX = 4096;
+
+  const types = ["grass", "dirt", "stone", "bedrock"];
+  for (const type of types) {
+    const mesh = new THREE.InstancedMesh(geometries[type], atlasMaterial, MAX);
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    group.add(mesh);
+    meshMap[type] = mesh;
+    counters[type] = 0;
+  }
+
+  const dummy = new THREE.Object3D();
+  const yMin = -64;
 
   for (let x = 0; x < CHUNK_SIZE; x++) {
     for (let z = 0; z < CHUNK_SIZE; z++) {
       const worldX = cx * CHUNK_SIZE + x;
       const worldZ = cz * CHUNK_SIZE + z;
 
-      const n = simplex.noise2D(worldX / 10, worldZ / 10);
-      const height = Math.floor((n + 1) * 5);
+      const noise = simplex.noise2D(worldX / 20, worldZ / 20);
+      const surfaceY = Math.max(64, Math.floor(64 + noise * 2));
 
-      for (let y = 0; y < height; y++) {
+      for (let y = yMin; y <= surfaceY; y++) {
+        // 🔽 Limitar renderizado hacia abajo
+        const alturaJugador = Math.floor(player.position.y);
+        if (y < alturaJugador - RENDER_HACIA_ABAJO) continue;
+
         let type = "stone";
-        if (y === height - 1) type = "grass";
-        else if (y >= height - 3) type = "dirt";
+        if (y === yMin) type = "bedrock";
+        else if (y >= surfaceY - 3 && y < surfaceY) type = "dirt";
+        else if (y === surfaceY) type = "grass";
 
-        const lx = x;
-        const lz = z;
-        const delKey = `${cx},${cz}|${lx},${y},${lz}`;
-        if (deletedBlocks.has(delKey)) continue; // no crear si fue destruido
+        const delKey = `${cx},${cz}|${x},${y},${z}`;
+        if (deletedBlocks.has(delKey)) continue;
 
-        const block = createBlock(worldX, y, worldZ, type);
-        group.add(block);
-        terrain.push(block); // necesario para raycasting y colisiones
+        const i = counters[type]++;
+        if (i >= MAX) continue;
 
-        // guardar bloque en estructura local
-        if (!blocks[lx]) blocks[lx] = {};
-        if (!blocks[lx][y]) blocks[lx][y] = {};
-        blocks[lx][y][lz] = {
-          mesh: block,
-          type: type,
-          exists: true
-        };
+        dummy.position.set(worldX, y, worldZ);
+        dummy.updateMatrix();
+        meshMap[type].setMatrixAt(i, dummy.matrix);
+
+        if (!blocks[x]) blocks[x] = {};
+        if (!blocks[x][y]) blocks[x][y] = {};
+        blocks[x][y][z] = { instanceIndex: i, type, exists: true };
       }
     }
   }
 
   scene.add(group);
   loadedChunks.set(key, {
-    mesh: group,
-    blocks: blocks
-  });
+  mesh: group,
+  blocks: blocks,
+  alturaGenerada: Math.floor(player.position.y)  // << 🔍 nueva propiedad
+});
+
 }
+function actualizarVisibilidadBloques(cx, cz) {
+  const key = `${cx},${cz}`;
+  const chunk = loadedChunks.get(key);
+  if (!chunk) return;
+
+  const bloques = chunk.blocks;
+  const grupo = chunk.mesh;
+
+  const dummy = new THREE.Object3D();
+
+  const dirs = [
+    [1, 0, 0], [-1, 0, 0],
+    [0, 1, 0], [0, -1, 0],
+    [0, 0, 1], [0, 0, -1],
+  ];
+
+  for (let x in bloques) {
+    for (let y in bloques[x]) {
+      for (let z in bloques[x][y]) {
+        const data = bloques[x][y][z];
+        if (!data.exists) continue;
+
+        let rodeado = true;
+
+        for (let [dx, dy, dz] of dirs) {
+          const nx = parseInt(x) + dx;
+          const ny = parseInt(y) + dy;
+          const nz = parseInt(z) + dz;
+
+          if (!bloques[nx]?.[ny]?.[nz]?.exists) {
+            rodeado = false;
+            break;
+          }
+        }
+
+        const mesh = grupo.children.find(m => m instanceof THREE.InstancedMesh && m.geometry === geometries[data.type]);
+        if (!mesh || data.instanceIndex === undefined) continue;
+
+        if (rodeado) {
+          dummy.position.set(9999, 9999, 9999); // ocultar
+        } else {
+          const worldX = cx * CHUNK_SIZE + parseInt(x);
+          const worldY = parseInt(y);
+          const worldZ = cz * CHUNK_SIZE + parseInt(z);
+          dummy.position.set(worldX, worldY, worldZ);
+        }
+
+        dummy.updateMatrix();
+        mesh.setMatrixAt(data.instanceIndex, dummy.matrix);
+      }
+    }
+  }
+
+  for (const mesh of grupo.children) {
+    if (mesh instanceof THREE.InstancedMesh) {
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+}
+setInterval(() => {
+  for (const key of loadedChunks.keys()) {
+    const [cx, cz] = key.split(',').map(Number);
+    actualizarVisibilidadBloques(cx, cz);
+  }
+}, 100); // cada 1 segundo
 
 setTimeout(() => {
   const pantalla = document.getElementById("pantalla-carga");
   if (pantalla) pantalla.style.display = "none";
   console.log("⏳ Pantalla de carga oculta tras 30 segundos.");
-}, 30000); // ← Cambia este valor si quieres otro tiempo
+}, 5000); // ← Cambia este valor si quieres otro tiempo
+
 
 function updateChunksAroundPlayer() {
   const px = Math.floor(player.position.x / CHUNK_SIZE);
@@ -718,11 +1030,67 @@ function updateChunksAroundPlayer() {
       const cz = pz + dz;
       const key = `${cx},${cz}`;
       seen.add(key);
-      if (!loadedChunks.has(key)) {
-        chunksToGenerate.push([cx, cz]); // Solo los no cargados
-      }
+      const chunk = loadedChunks.get(key);
+const alturaJugador = Math.floor(player.position.y);
+
+if (!chunk) {
+  chunksToGenerate.push([cx, cz]);
+} else {
+  const diferenciaAltura = Math.abs(chunk.alturaGenerada - alturaJugador);
+  if (diferenciaAltura > RENDER_HACIA_ABAJO) {
+    // Eliminar chunk para regenerarlo con nueva altura visible
+    scene.remove(chunk.mesh);
+    loadedChunks.delete(key);
+    chunksToGenerate.push([cx, cz]);
+  }
+}
+
     }
   }
+  
+  function posicionarJugadorInicial(intentos = 0) {
+  const px = 0;
+  const pz = 0;
+  const cx = Math.floor(px / CHUNK_SIZE);
+  const cz = Math.floor(pz / CHUNK_SIZE);
+  const key = `${cx},${cz}`;
+
+  const chunk = loadedChunks.get(key);
+
+  if (!chunk) {
+    if (intentos < 50) {
+      setTimeout(() => posicionarJugadorInicial(intentos + 1), 100);
+    } else {
+      console.warn("❌ No se pudo encontrar chunk para posicionar al jugador.");
+    }
+    return;
+  }
+
+  let altura = -1;
+  const bx = px % CHUNK_SIZE;
+  const bz = pz % CHUNK_SIZE;
+
+  for (let y = 20; y >= 0; y--) {
+    if (chunk.blocks?.[bx]?.[y]?.[bz]?.exists) {
+      altura = y;
+      break;
+    }
+  }
+
+  if (altura === -1) {
+    if (intentos < 50) {
+      setTimeout(() => posicionarJugadorInicial(intentos + 1), 100);
+    } else {
+      console.warn("❌ No se encontró altura válida para colocar al jugador.");
+    }
+    return;
+  }
+
+  // ✅ Posicionar al jugador justo encima
+  player.position.set(px + 0.5, altura + 1.5, pz + 0.5);
+  velocityY = 0;
+}
+
 const textoCarga = document.getElementById("texto-carga");
 let puntos = 0;
 setInterval(() => {
@@ -731,10 +1099,14 @@ setInterval(() => {
 }, 1000);
 
   // Cargar lentamente, uno cada 50ms
-  chunksToGenerate.forEach(([cx, cz], index) => {
-  setTimeout(() => {
-    generateChunk(cx, cz);
-  }, index * 500); // ⬅️ Aumentado de 50 a 200ms
+  const orden = generarOrdenEspiral(RENDER_DISTANCE);
+orden.forEach(([dx, dz], index) => {
+  const cx = px + dx;
+  const cz = pz + dz;
+  const key = `${cx},${cz}`;
+  if (!loadedChunks.has(key)) {
+    setTimeout(() => generateChunk(cx, cz), index * 200); // carga suave
+  }
 });
 
 
@@ -748,7 +1120,7 @@ setInterval(() => {
   }
 }
 
-setInterval(actualizarVisibilidadGlobal, 100);
+
 
 
 const faceTexture = loader.load('Texturas/cub.png');
@@ -820,19 +1192,100 @@ function dibujarDebugColisiones() {
   scene.add(rayLine);
   debugLines.push(rayLine);
 }
+function obtenerBloquesCercanos(x, z, rango = 1) {
+  const bloques = [];
 
-function getGroundHeight(x, z) {
-  raycaster.ray.origin.set(x, player.position.y + 1, z); // o +1.5 para margen
-  raycaster.ray.direction.copy(down);
-  const hits = raycaster.intersectObjects(terrain);
-  if (hits.length > 0) return hits[0].point.y;
-  return 0;
+  const cx = Math.floor(x / CHUNK_SIZE);
+  const cz = Math.floor(z / CHUNK_SIZE);
+
+  for (let dx = -rango; dx <= rango; dx++) {
+    for (let dz = -rango; dz <= rango; dz++) {
+      const key = `${cx + dx},${cz + dz}`;
+      const chunk = loadedChunks.get(key);
+      if (!chunk) continue;
+
+      for (let lx in chunk.blocks) {
+        for (let y in chunk.blocks[lx]) {
+          for (let lz in chunk.blocks[lx][y]) {
+            const data = chunk.blocks[lx][y][lz];
+            if (data.exists && data.mesh) {
+              bloques.push(data.mesh);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return bloques;
 }
 
+function getGroundHeight(x, z) {
+  raycaster.ray.origin.set(x, player.position.y + 1, z);
+  raycaster.ray.direction.set(0, -1, 0);
 
-player.position.set(8, 30, 8); // 30 para asegurarte de que cae al suelo generado
+  const hits = raycaster.intersectObjects(bloquesFisicos, false);
 
-player.position.y = getGroundHeight(player.position.x, player.position.z)+0.45;
+  if (hits.length > 0) {
+    // Devuelve la parte superior del bloque (y del centro + 0.5)
+    return hits[0].object.position.y + 0.5;
+  }
+
+  return -Infinity;
+}
+
+function getNearbyBlockBoxes(x, y, z) {
+  const cx = Math.floor(x / CHUNK_SIZE);
+  const cz = Math.floor(z / CHUNK_SIZE);
+  const bloques = [];
+
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      const key = `${cx + dx},${cz + dz}`;
+      const chunk = loadedChunks.get(key);
+      if (!chunk) continue;
+
+      const blocks = chunk.blocks;
+      for (const lx in blocks) {
+        for (const ly in blocks[lx]) {
+          for (const lz in blocks[lx][ly]) {
+            const b = blocks[lx][ly][lz];
+            if (!b.exists) continue;
+
+            const wx = (cx + dx) * CHUNK_SIZE + parseInt(lx);
+            const wy = parseInt(ly);
+            const wz = (cz + dz) * CHUNK_SIZE + parseInt(lz);
+
+            bloques.push({ x: wx, y: wy, z: wz });
+          }
+        }
+      }
+    }
+  }
+
+  return bloques;
+}
+function colisionaAABB(x, y, z, ancho = 0.6, alto = 0.9) {
+  const min = { x: x - ancho / 2, y: y, z: z - ancho / 2 };
+  const max = { x: x + ancho / 2, y: y + alto, z: z + ancho / 2 };
+
+  const bloques = getNearbyBlockBoxes(x, y, z);
+
+  for (const b of bloques) {
+    const bloqueMin = { x: b.x, y: b.y, z: b.z };
+    const bloqueMax = { x: b.x + 1, y: b.y + 1, z: b.z + 1 };
+
+    const colisiona =
+      min.x < bloqueMax.x && max.x > bloqueMin.x &&
+      min.y < bloqueMax.y && max.y > bloqueMin.y &&
+      min.z < bloqueMax.z && max.z > bloqueMin.z;
+
+    if (colisiona) return true;
+  }
+
+  return false;
+}
+
 const pauseBtn = document.getElementById("pause-button");
 const pauseMenu = document.getElementById("pause-menu");
 const resumeBtn = document.getElementById("resume-btn");
@@ -872,6 +1325,79 @@ closeBtn.addEventListener('click', () => {
   slidePanel.classList.remove('open');
 });
 
+let bloquesFisicos = [];
+
+function actualizarBloquesFisicos() {
+  // Eliminar los antiguos
+  for (const m of bloquesFisicos) {
+    scene.remove(m);
+  }
+  bloquesFisicos = [];
+
+  const cx = Math.floor(player.position.x / CHUNK_SIZE);
+  const cz = Math.floor(player.position.z / CHUNK_SIZE);
+
+  const r = 1; // rango de chunks alrededor
+
+  for (let dx = -r; dx <= r; dx++) {
+    for (let dz = -r; dz <= r; dz++) {
+      const key = `${cx + dx},${cz + dz}`;
+      const chunk = loadedChunks.get(key);
+      if (!chunk) continue;
+
+      for (const lx in chunk.blocks) {
+        for (const ly in chunk.blocks[lx]) {
+          for (const lz in chunk.blocks[lx][ly]) {
+            const block = chunk.blocks[lx][ly][lz];
+            if (!block.exists) continue;
+
+            const worldX = (cx + dx) * CHUNK_SIZE + parseInt(lx);
+            const worldY = parseInt(ly);
+            const worldZ = (cz + dz) * CHUNK_SIZE + parseInt(lz);
+
+            // Solo los que están cerca del jugador (radio de 3 bloques)
+            const dist = player.position.distanceTo(new THREE.Vector3(worldX, worldY, worldZ));
+            if (dist > 3.5) continue;
+
+            // Crear Mesh individual invisible (solo para colisión)
+            const m = new THREE.Mesh(
+  new THREE.BoxGeometry(1, 1, 1),
+  new THREE.MeshBasicMaterial({ color: 0xff0000, visible: false }) // invisible
+);
+m.position.set(worldX + 0.5, worldY + 0.5, worldZ + 0.5); // CENTRO del bloque
+m.updateMatrixWorld();
+
+            m.position.set(worldX, worldY, worldZ);
+            scene.add(m);
+            bloquesFisicos.push(m);
+          }
+        }
+      }
+    }
+  }
+}
+function colisionaConBloquesFisicos(x, y, z) {
+  const ancho = 0.6;
+  const alto = 0.9;
+
+  const jugadorMin = new THREE.Vector3(x - ancho / 2, y, z - ancho / 2);
+  const jugadorMax = new THREE.Vector3(x + ancho / 2, y + alto, z + ancho / 2);
+
+  for (const bloque of bloquesFisicos) {
+    bloque.geometry.computeBoundingBox();
+    const box = bloque.geometry.boundingBox.clone();
+    box.applyMatrix4(bloque.matrixWorld);
+
+    const intersecta =
+      jugadorMin.x < box.max.x && jugadorMax.x > box.min.x &&
+      jugadorMin.y < box.max.y && jugadorMax.y > box.min.y &&
+      jugadorMin.z < box.max.z && jugadorMax.z > box.min.z;
+
+    if (intersecta) return true;
+  }
+
+  return false;
+}
 
 const showDebugBtn = document.createElement('div');
 showDebugBtn.id = 'collision-toggle';
@@ -900,6 +1426,9 @@ showDebugBtn.onclick = () => {
 
 slidePanel.appendChild(showDebugBtn);
 
+setInterval(() => {
+  if (!modoEspectador) actualizarBloquesFisicos();
+}, 300);
 
 let mostrarColisiones = false;
 showDebugBtn.addEventListener('click', () => {
@@ -1088,84 +1617,109 @@ let breaking = false;
 let currentTarget = null;
 let breakStartTime = 0;
 
+let currentInstance = null;
+let currentMesh = null;
+
 priButton.addEventListener("touchstart", () => {
-  raycaster.setFromCamera({x: 0, y: 0}, camera);
-  const intersects = raycaster.intersectObjects(terrain);
-  if (intersects.length > 0) {
-    currentTarget = intersects[0].object;
-    breakStartTime = performance.now();
-    breaking = true;
+  const raycaster = new THREE.Raycaster();
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  raycaster.set(camera.position, dir);
+
+  for (const chunkEntry of loadedChunks.entries()) {
+    const [chunkKey, chunkData] = chunkEntry;
+    const [cx, cz] = chunkKey.split(",").map(Number);
+
+    for (const mesh of chunkData.mesh.children) {
+      if (!(mesh instanceof THREE.InstancedMesh)) continue;
+
+      const hits = raycaster.intersectObject(mesh, true);
+      if (hits.length > 0) {
+        const { instanceId } = hits[0];
+        crackInstanceId = instanceId;
+        crackInstancedMesh = mesh;
+        crackStartTime = performance.now();
+        crackBreaking = true;
+        return;
+      }
+    }
   }
 });
 
 priButton.addEventListener("touchend", () => {
-  breaking = false;
-  if (currentTarget) {
-    removeCrackOverlay(currentTarget);
-    currentTarget.userData.currentBreak = 0;
-    currentTarget = null;
-  }
+  crackBreaking = false;
+  hideCrackOverlay();
 });
 
-function addCrackLayer(block, index) {
-  if (block.userData.crackOverlay) {
-    block.userData.crackOverlay.material.map = texturesCrack[index];
-    block.userData.crackOverlay.material.needsUpdate = true;
-    return;
-  }
-
-  const crackTexture = texturesCrack[index];
-
-  const crackMaterial = new THREE.MeshBasicMaterial({
-    map: crackTexture,
-    transparent: true,
-    depthTest: true,
-    depthWrite: false,
-  });
-
-  const crackMesh = new THREE.Mesh(block.geometry.clone(), crackMaterial);
-  crackMesh.position.set(0, 0, 0); // relativo al bloque
-  crackMesh.rotation.set(0, 0, 0);
-  crackMesh.scale.set(1, 1, 1);
-  crackMesh.renderOrder = 999;
-
-  block.add(crackMesh);
-  block.userData.crackOverlay = crackMesh;
+function showCrackOverlay(pos, progress, textures) {
+  const idx = Math.min(Math.floor(progress * textures.length), textures.length - 1);
+  crackOverlayObj.position.copy(pos);
+  crackOverlayObj.material.map = textures[idx];
+  crackOverlayObj.material.needsUpdate = true;
+  crackOverlayObj.visible = true;
 }
 
-function updateCrackLayer(block, progress) {
+function hideCrackOverlay() {
+  crackOverlayObj.visible = false;
+}
+
+function setBlockResistanceAt(cx, cz, lx, ly, lz, value) {
+  const key = `${cx},${cz}|${lx},${ly},${lz}`;
+  crackResistances.set(key, value);
+}
+
+function getBlockResistanceAt(cx, cz, lx, ly, lz) {
+  const key = `${cx},${cz}|${lx},${ly},${lz}`;
+  return crackResistances.get(key) ?? 1;
+}
+
+function addCrackLayer(instanceMatrix, index) {
+  crackOverlayMesh.material.map = texturesCrack[index];
+  crackOverlayMesh.material.needsUpdate = true;
+  crackOverlayMesh.visible = true;
+
+  const matrix = new THREE.Matrix4();
+  matrix.fromArray(instanceMatrix);
+  crackOverlayMesh.matrix.copy(matrix);
+  crackOverlayMesh.matrix.decompose(
+    crackOverlayMesh.position,
+    crackOverlayMesh.quaternion,
+    crackOverlayMesh.scale
+  );
+}
+function updateCrackOverlayInstance(position, progress, crackTextures) {
+  if (!crackOverlayInstanceMesh) return;
+
+  const index = Math.min(Math.floor(progress * crackTextures.length), crackTextures.length - 1);
+  crackOverlayInstanceMesh.material.map = crackTextures[index];
+  crackOverlayInstanceMesh.material.needsUpdate = true;
+
+  crackOverlayInstanceMesh.position.copy(position);
+  crackOverlayInstanceMesh.visible = true;
+}
+function hideCrackOverlayInstance() {
+  if (crackOverlayInstanceMesh) {
+    crackOverlayInstanceMesh.visible = false;
+  }
+}
+
+function updateCrackLayer(progress) {
   const index = Math.min(Math.floor(progress * texturesCrack.length), texturesCrack.length - 1);
-
-  if (!block.userData.crackOverlay) {
-    addCrackLayer(block, index);
-  } else {
-    block.userData.crackOverlay.material.map = texturesCrack[index];
-    block.userData.crackOverlay.material.needsUpdate = true;
-  }
+  crackOverlayMesh.material.map = texturesCrack[index];
+  crackOverlayMesh.material.needsUpdate = true;
 }
 
-function removeCrackOverlay(block) {
-  const overlay = block.userData.crackOverlay;
-  if (overlay) {
-    block.remove(overlay);
-    if (overlay.geometry) {
-      overlay.geometry.dispose();
-      overlay.geometry = null;
-    }
-    if (overlay.material) {
-      overlay.material.dispose();
-      overlay.material = null;
-    }
-    block.userData.crackOverlay = null;
-  }
-  // (resto igual)
+function removeCrackOverlay() {
+  crackOverlayMesh.visible = false;
 }
 
 const maxBreakDistance = 6;
 
 priButton.addEventListener("touchstart", () => {
   raycaster.setFromCamera({x: 0, y: 0}, camera);
-  const intersects = raycaster.intersectObjects(terrain);
+  const cercanos = obtenerBloquesCercanos(player.position.x, player.position.z);
+const intersects = raycaster.intersectObjects(cercanos, false);
+
   if (intersects.length > 0) {
     const target = intersects[0].object;
     const distance = camera.position.distanceTo(target.position);
@@ -1179,6 +1733,63 @@ priButton.addEventListener("touchstart", () => {
 
 function animate() {
   requestAnimationFrame(animate);
+  if (crackBreaking && crackInstanceId !== null && crackInstancedMesh) {
+  const dummy = new THREE.Object3D();
+  crackInstancedMesh.getMatrixAt(crackInstanceId, dummy.matrix);
+  dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+
+  const dist = camera.position.distanceTo(dummy.position);
+  if (dist > maxBreakDistance) {
+    crackBreaking = false;
+    hideCrackOverlay();
+    return;
+  }
+
+  const chunkEntry = Array.from(loadedChunks.entries()).find(([, c]) =>
+    c.mesh.children.includes(crackInstancedMesh)
+  );
+
+  if (!chunkEntry) return;
+  const [chunkKey, chunkData] = chunkEntry;
+  const [cx, cz] = chunkKey.split(",").map(Number);
+  const lx = Math.floor(dummy.position.x) % CHUNK_SIZE;
+  const ly = Math.floor(dummy.position.y);
+  const lz = Math.floor(dummy.position.z) % CHUNK_SIZE;
+  const idKey = `${chunkKey}|${lx},${ly},${lz}`;
+
+  if (!crackBreakProgress[idKey]) crackBreakProgress[idKey] = 0;
+
+  const delta = 0.016;
+  crackBreakProgress[idKey] += delta;
+
+  const resistencia = getBlockResistanceAt(cx, cz, lx, ly, lz);
+  const progress = crackBreakProgress[idKey] / resistencia;
+
+  showCrackOverlay(dummy.position, progress, texturesCrack);
+
+  if (progress >= 1) {
+    // Eliminar instancia
+    const hidden = new THREE.Object3D();
+    hidden.position.set(9999, 9999, 9999);
+    hidden.updateMatrix();
+    crackInstancedMesh.setMatrixAt(crackInstanceId, hidden.matrix);
+    crackInstancedMesh.instanceMatrix.needsUpdate = true;
+
+    deletedBlocks.set(idKey, true);
+    if (chunkData.blocks?.[lx]?.[ly]?.[lz]) {
+      chunkData.blocks[lx][ly][lz].exists = false;
+    }
+mostrarVecinosSiAhoraEstanExpuestos(cx, cz, lx, ly, lz);
+
+    delete crackBreakProgress[idKey];
+    hideCrackOverlay();
+
+    crackInstanceId = null;
+    crackInstancedMesh = null;
+    crackBreaking = false;
+  }
+}
+
   const enableStepUp = false;
 const breakBarContainer = document.getElementById('break-bar-container');
 const breakBar = document.getElementById('break-bar');
@@ -1281,70 +1892,138 @@ const playerHeight = 0.9;
   player.position.add(moveStep); // 👻 atraviesa todo
 } else {
   const newPos = player.position.clone().add(moveStep);
-  const collisions = terrain.some(obj => {
-    const dist = obj.position.distanceTo(newPos);
-    return dist < 0.5; // tamaño del cuerpo del jugador
-  });
-  if (!collisions) {
+
+  // Primero: intenta moverse normalmente
+  if (!colisionaConBloquesFisicos(newPos.x, newPos.y, newPos.z)) {
     player.position.copy(newPos);
-  }
-}}
-
-
-  if (breaking && currentTarget && terrain.includes(currentTarget)) {
-  const distance = camera.position.distanceTo(currentTarget.position);
-  if (distance > maxBreakDistance) {
-    breaking = false;
-    removeCrackOverlay(currentTarget);
-    currentTarget.userData.currentBreak = 0;
-    currentTarget = null;
-    updateBreakBar(0);
   } else {
-    const delta = 0.016;
-    const data = currentTarget.userData;
-    data.currentBreak += delta;
-    const progress = data.currentBreak / data.resistance;
+    // Segundo intento: mover con paso vertical pequeño (escalón)
+    const escalonPos = newPos.clone();
+    escalonPos.y += 0.5; // intenta subir medio bloque
 
-    updateBreakBar(progress);
-    updateCrackLayer(currentTarget, progress); // 👈 aplicar textura encima
-
-    if (progress >= 1) {
-  if (currentTarget.parent) {
-    currentTarget.parent.remove(currentTarget);
+    if (!colisionaConBloquesFisicos(escalonPos.x, escalonPos.y, escalonPos.z)) {
+      player.position.copy(escalonPos);
+    }
+    // Si choca incluso con el paso, no se mueve
   }
-  const worldPos = currentTarget.position;
-const cx = Math.floor(worldPos.x / CHUNK_SIZE);
-const cz = Math.floor(worldPos.z / CHUNK_SIZE);
-const lx = Math.floor(worldPos.x) % CHUNK_SIZE;
-const lz = Math.floor(worldPos.z) % CHUNK_SIZE;
-const ly = Math.floor(worldPos.y);
-const delKey = `${cx},${cz}|${lx},${ly},${lz}`;
-deletedBlocks.set(delKey, true);
+}
+}
 
-  // Eliminar de los datos del chunk
-const parentChunk = Array.from(loadedChunks.values()).find(c => c.mesh === currentTarget.parent);
-if (parentChunk) {
-  for (let lx in parentChunk.blocks) {
-    for (let y in parentChunk.blocks[lx]) {
-      for (let lz in parentChunk.blocks[lx][y]) {
-        const b = parentChunk.blocks[lx][y][lz];
-        if (b.mesh === currentTarget) {
-          parentChunk.blocks[lx][y][lz].exists = false;
-          parentChunk.blocks[lx][y][lz].mesh = null;
+  if (breaking) {
+  // 🔷 BLOQUES NORMALES (con Mesh individuales)
+  if (currentTarget && terrain.includes(currentTarget)) {
+    const distance = camera.position.distanceTo(currentTarget.position);
+    if (distance > maxBreakDistance) {
+      breaking = false;
+      removeCrackOverlay(currentTarget);
+      currentTarget.userData.currentBreak = 0;
+      currentTarget = null;
+      updateBreakBar(0);
+    } else {
+      const delta = 0.016;
+      const data = currentTarget.userData;
+      data.currentBreak += delta;
+      const progress = data.currentBreak / data.resistance;
+
+      updateBreakBar(progress);
+      updateCrackLayer(currentTarget, progress);
+
+      if (progress >= 1) {
+        // Eliminar visualmente
+        if (currentTarget.parent) currentTarget.parent.remove(currentTarget);
+
+        // Obtener coordenadas del bloque
+        const worldPos = currentTarget.position;
+        const cx = Math.floor(worldPos.x / CHUNK_SIZE);
+        const cz = Math.floor(worldPos.z / CHUNK_SIZE);
+        const lx = Math.floor(worldPos.x) % CHUNK_SIZE;
+        const lz = Math.floor(worldPos.z) % CHUNK_SIZE;
+        const ly = Math.floor(worldPos.y);
+        const delKey = `${cx},${cz}|${lx},${ly},${lz}`;
+        deletedBlocks.set(delKey, true);
+const resistencia = Math.random() * 1.5 + 0.5;
+setBlockResistanceAt(cx, cz, lx, ly, lz, resistencia);
+
+        // Eliminar del chunk
+        const parentChunk = Array.from(loadedChunks.values()).find(c => c.mesh === currentTarget.parent);
+        if (parentChunk && parentChunk.blocks?.[lx]?.[ly]?.[lz]) {
+          parentChunk.blocks[lx][ly][lz].exists = false;
+          parentChunk.blocks[lx][ly][lz].mesh = null;
         }
+
+        // Eliminar del array global
+        const idx = terrain.indexOf(currentTarget);
+        if (idx !== -1) terrain.splice(idx, 1);
+
+        // Limpieza final
+        removeCrackOverlay(currentTarget);
+        currentTarget = null;
+        breaking = false;
+        updateBreakBar(0);
+      }
+    }
+  }
+
+  // 🟩 INSTANCEDMESH
+  else if (currentInstance !== null && currentMesh) {
+    const distance = camera.position.distanceTo(crackOverlayMesh.position);
+    if (distance > maxBreakDistance) {
+      breaking = false;
+      removeCrackOverlay();
+      updateBreakBar(0);
+      currentInstance = null;
+      currentMesh = null;
+    } else {
+      const delta = 0.016;
+      const now = performance.now();
+      const progress = Math.min((now - breakStartTime) / 1000, 1);
+
+      updateBreakBar(progress);
+      updateCrackLayer(progress);
+updateCrackOverlayInstance(dummy.position, progress, texturesCrack);
+
+      if (progress >= 1) {
+        const dummy = new THREE.Object3D();
+        dummy.position.set(9999, 9999, 9999);
+        dummy.updateMatrix();
+        currentMesh.setMatrixAt(currentInstance, dummy.matrix);
+        currentMesh.instanceMatrix.needsUpdate = true;
+
+        // Marcar como eliminado en el mapa
+        // Buscamos el chunk que contiene este InstancedMesh
+        const chunkEntry = Array.from(loadedChunks.entries()).find(([, val]) =>
+          val.mesh.children.includes(currentMesh)
+        );
+        if (chunkEntry) {
+          const [key, chunkData] = chunkEntry;
+          const [cx, cz] = key.split(",").map(Number);
+
+          // Buscar instancia por matriz
+          const dummy = new THREE.Object3D();
+          currentMesh.getMatrixAt(currentInstance, dummy.matrix);
+          dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+
+          const lx = Math.floor(dummy.position.x) % CHUNK_SIZE;
+          const lz = Math.floor(dummy.position.z) % CHUNK_SIZE;
+          const ly = Math.floor(dummy.position.y);
+          const delKey = `${cx},${cz}|${lx},${ly},${lz}`;
+          deletedBlocks.set(delKey, true);
+
+          if (chunkData.blocks?.[lx]?.[ly]?.[lz]) {
+            chunkData.blocks[lx][ly][lz].exists = false;
+          }
+        }
+
+        removeCrackOverlay();
+        updateBreakBar(0);
+        currentInstance = null;
+        currentMesh = null;
+        breaking = false;
       }
     }
   }
 }
 
-  const idx = terrain.indexOf(currentTarget);
-  if (idx !== -1) terrain.splice(idx, 1);
-  removeCrackOverlay(currentTarget);
-  currentTarget = null;
-  breaking = false;
-  updateBreakBar(0);
-}
-}}
 function limpiarCracksFlotantes() {
   for (const bloque of terrain) {
     const overlay = bloque.userData.crackOverlay;
@@ -1559,8 +2238,15 @@ offset = new THREE.Vector3(0, 2, -3);
   renderer.render(scene, camera);
 }
 
+
 updateChunksAroundPlayer();
 setInterval(updateChunksAroundPlayer, 1000); // actualiza cada segundo
+posicionarJugadorInicial();
+
+setInterval(() => {
+  if (!modoEspectador) actualizarBloquesFisicos();
+}, 250);
+
 animate();
 
 
